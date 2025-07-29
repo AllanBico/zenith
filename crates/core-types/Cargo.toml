@@ -3,4 +3,21 @@ name = "core-types"
 version = "0.1.0"
 edition = "2024"
 
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
 [dependencies]
+# For serializing and deserializing our data structures (e.g., to JSON, TOML).
+serde = { version = "1.0", features = ["derive"] }
+
+# For high-precision, fixed-point decimal arithmetic. Critical for financial calculations to avoid floating-point errors.
+rust_decimal = "1.37"
+rust_decimal_macros = "1.35"
+
+# For robust handling of timestamps, including timezone awareness.
+chrono = { version = "0.4", features = ["serde"] }
+
+# For generating unique identifiers (UUIDs) for orders, trades, and reports.
+uuid = { version = "1.17", features = ["v4", "serde"] }
+
+# For creating structured, specific error types for this crate.
+thiserror = "1.0"
