@@ -1,0 +1,22 @@
+[package]
+name = "zenith"
+version = "0.1.0"
+edition = "2024"
+
+[workspace]
+members = [
+    "crates/core-types",
+    "crates/events",
+    "crates/strategies",
+    "crates/analytics",
+    "crates/risk",
+    "crates/engine",
+    "crates/backtester",
+    "crates/optimizer",
+    "crates/database",
+    "crates/api-client",
+    "crates/web-server",
+]
+resolver = "2"
+
+[dependencies]
