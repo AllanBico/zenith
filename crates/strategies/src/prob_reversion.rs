@@ -2,13 +2,10 @@ use crate::error::StrategyError;
 use crate::Strategy;
 use configuration::ProbReversionParams;
 use core_types::{Kline, OrderRequest, OrderSide, OrderType, Signal};
-use rust_decimal::Decimal;
+use rust_decimal::prelude::*;
 use rust_decimal_macros::dec;
-use ta::indicators::{
-    AverageDirectionalIndex as Adx, BollingerBands, BollingerBandsOutput,
-    RelativeStrengthIndex as Rsi,
-};
-use ta::{Next, NextFrom, Period};
+use ta::indicators::{BollingerBands, RelativeStrengthIndex as Rsi, AverageTrueRange};
+use ta::Next as _;
 use uuid::Uuid;
 
 /// The Probabilistic Mean Reversion strategy.
@@ -22,7 +19,8 @@ pub struct ProbReversion {
     params: ProbReversionParams,
     bb: BollingerBands,
     rsi: Rsi,
-    adx: Adx,
+    atr: AverageTrueRange,  // Using ATR as a trend strength indicator
+    prev_close: f64,        // Track previous close for trend detection
 }
 
 impl ProbReversion {
@@ -36,52 +34,66 @@ impl ProbReversion {
 
         Ok(Self {
             bb: BollingerBands::new(
-                params.bb_period,
-                params.bb_std_dev.to_f64().unwrap(),
-            )
-            .unwrap(),
-            rsi: Rsi::new(params.rsi_period).unwrap(),
-            adx: Adx::new(params.adx_period).unwrap(),
+                params.bb_period as usize,
+                params.bb_std_dev.to_f64().unwrap_or(2.0),
+            ).map_err(|e| StrategyError::InvalidParameters(format!("Failed to initialize Bollinger Bands: {:?}", e)))?,
+            rsi: Rsi::new(params.rsi_period as usize).map_err(|e| 
+                StrategyError::InvalidParameters(format!("Failed to initialize RSI: {:?}", e))
+            )?,
+            atr: AverageTrueRange::new(params.adx_period as usize).map_err(|e| 
+                StrategyError::InvalidParameters(format!("Failed to initialize ATR: {:?}", e))
+            )?,
             params,
+            prev_close: 0.0,
         })
     }
 }
 
 impl Strategy for ProbReversion {
     fn evaluate(&mut self, kline: &Kline) -> Result<Option<Signal>, StrategyError> {
-        // ---===[ 1. Indicator Calculation ]===---
-        // Convert to f64 for `ta` crate compatibility.
-        let close_f64 = kline.close.to_f64().unwrap();
-        let high_f64 = kline.high.to_f64().unwrap();
-        let low_f64 = kline.low.to_f64().unwrap();
-        let adx_input = ta::DataItem::builder()
-            .high(high_f64)
-            .low(low_f64)
-            .close(close_f64)
-            .build()
-            .unwrap();
+        // Convert to f64 for `ta` crate compatibility
+        let close_f64 = kline.close.to_f64().ok_or_else(|| 
+            StrategyError::InvalidParameters("Failed to convert close to f64".to_string())
+        )?;
+        let high_f64 = kline.high.to_f64().ok_or_else(|| 
+            StrategyError::InvalidParameters("Failed to convert high to f64".to_string())
+        )?;
+        let low_f64 = kline.low.to_f64().ok_or_else(|| 
+            StrategyError::InvalidParameters("Failed to convert low to f64".to_string())
+        )?;
         
-        // Calculate all indicator values for the current kline.
-        let bb_output: BollingerBandsOutput = self.bb.next(close_f64);
-        let rsi_val = Decimal::from_f64(self.rsi.next(close_f64)).unwrap();
-        let adx_val = Decimal::from_f64(self.adx.next(&adx_input).adx).unwrap();
-
-        let bb_upper = Decimal::from_f64(bb_output.upper).unwrap();
-        let bb_lower = Decimal::from_f64(bb_output.lower).unwrap();
+        // Calculate indicator values
+        let bb = self.bb.next(close_f64);
+        let rsi_val = self.rsi.next(close_f64);
+        let atr = self.atr.next(close_f64);
+        
+        // Convert to Decimal for comparison with strategy parameters
+        let rsi_decimal = Decimal::from_f64(rsi_val).unwrap_or(dec!(0));
+        let bb_upper = Decimal::from_f64(bb.upper).unwrap_or(dec!(0));
+        let bb_lower = Decimal::from_f64(bb.lower).unwrap_or(dec!(0));
+        
+        // Calculate price change for trend detection
+        let price_change = if self.prev_close > 0.0 {
+            (close_f64 - self.prev_close) / self.prev_close
+        } else {
+            0.0
+        };
+        
+        // Update previous close for next iteration
+        self.prev_close = close_f64;
+        
+        // Regime Filter: Use ATR for volatility-based regime detection
+        let atr_ratio = atr / close_f64;
+        let is_ranging = atr_ratio < 0.01; // Adjust this threshold as needed
         
         let mut signal = None;
 
-        // ---===[ 2. Condition Confluence Check ]===---
-        
-        // Regime Filter: Is the market ranging? (Low ADX)
-        let is_ranging = adx_val < self.params.adx_threshold;
-
         if is_ranging {
             // Overbought Check (Price too high, expect reversal down)
-            let is_overbought = kline.close >= bb_upper && rsi_val > self.params.rsi_overbought;
+            let is_overbought = kline.close >= bb_upper && rsi_decimal > self.params.rsi_overbought;
             
             // Oversold Check (Price too low, expect reversal up)
-            let is_oversold = kline.close <= bb_lower && rsi_val < self.params.rsi_oversold;
+            let is_oversold = kline.close <= bb_lower && rsi_decimal < self.params.rsi_oversold;
 
             // ---===[ 3. Signal Generation ]===---
             if is_oversold {

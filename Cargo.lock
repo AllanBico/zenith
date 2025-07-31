@@ -723,6 +723,14 @@ dependencies = [
 [[package]]
 name = "risk"
 version = "0.1.0"
+dependencies = [
+ "configuration",
+ "core-types",
+ "events",
+ "rust_decimal",
+ "serde",
+ "thiserror 2.0.12",
+]
 
 [[package]]
 name = "rkyv"

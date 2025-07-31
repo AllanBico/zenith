@@ -2,12 +2,22 @@ use rust_decimal::Decimal;
 use serde::Deserialize;
 
 /// The root configuration structure for the entire application.
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct Config {
+    pub risk_management: RiskManagement,
     pub strategies: Strategies,
     // Placeholders for future configurations
     // pub database: DatabaseConfig,
     // pub api: ApiConfig,
+}
+
+/// Contains parameters for trade-level risk management.
+#[derive(Debug, Clone, Deserialize)]
+pub struct RiskManagement {
+    /// The fraction of total portfolio equity to risk on a single trade (e.g., 0.01 for 1%).
+    pub risk_per_trade_pct: Decimal,
+    /// The percentage distance from the entry price to set the stop-loss for position sizing calculations.
+    pub stop_loss_pct: Decimal,
 }
 
 /// Contains the parameter sets for all available strategies.

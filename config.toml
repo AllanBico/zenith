@@ -6,6 +6,21 @@
 # ==============================================================================
 
 # ------------------------------------------------------------------------------
+# Risk Management
+#
+# These rules govern how individual trades are sized.
+# ------------------------------------------------------------------------------
+[risk_management]
+# The fraction of the total portfolio equity to risk per trade.
+# 0.01 means 1% of equity will be at risk on any given trade.
+risk_per_trade_pct = 0.01
+
+# The distance to the stop-loss, used for calculating position size.
+# 0.02 means the stop-loss is assumed to be 2% away from the entry price.
+stop_loss_pct = 0.02
+
+
+# ------------------------------------------------------------------------------
 # Strategy Parameters
 # ------------------------------------------------------------------------------
 [strategies]

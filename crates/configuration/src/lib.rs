@@ -1,4 +1,5 @@
 use crate::error::ConfigError;
+use crate::settings::Config;
 
 // Declare the modules that make up this crate.
 pub mod error;
@@ -6,7 +7,8 @@ pub mod settings;
 
 // Re-export the core types to provide a clean public API.
 pub use settings::{
-    Config, MACrossoverParams, ProbReversionParams, Strategies, SuperTrendParams, FundingRateArbParams
+    Config, FundingRateArbParams, MACrossoverParams, ProbReversionParams, RiskManagement,
+    Strategies, SuperTrendParams,
 };
 
 /// Loads the application configuration from the `config.toml` file.
