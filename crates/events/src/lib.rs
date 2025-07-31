@@ -1,14 +1,15 @@
-pub fn add(left: u64, right: u64) -> u64 {
-    left + right
-}
+//! # Zenith Events
+//!
+//! This crate defines the real-time event structures used for WebSocket communication
+//! between the backend engine and the frontend UI.
+//!
+//! As a Layer 0 crate, it depends only on `core-types` and provides the definitive
+//! language for all real-time state synchronization.
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+// Declare the modules that make up this crate.
+pub mod error;
+pub mod messages;
 
-    #[test]
-    fn it_works() {
-        let result = add(2, 2);
-        assert_eq!(result, 4);
-    }
-}
+// Re-export the core types to provide a clean public API.
+pub use error::EventsError;
+pub use messages::{LogLevel, LogMessage, PortfolioState, WsMessage};

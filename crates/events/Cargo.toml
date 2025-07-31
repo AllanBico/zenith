@@ -4,3 +4,24 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+# ==============================================================================
+# Workspace Dependencies
+# ==============================================================================
+# The ONLY local crate this crate is allowed to depend on.
+# It uses the foundational data structures like `Position` and `Execution` to build its event payloads.
+core-types = { path = "../core-types" }
+
+# ==============================================================================
+# External Dependencies
+# ==============================================================================
+# For serializing and deserializing our event structures into JSON for WebSocket transport.
+serde = { version = "1.0", features = ["derive"] }
+
+# For timestamping events.
+chrono = { version = "0.4", features = ["serde"] }
+
+# For creating structured, specific error types for this crate.
+thiserror = "2.0"
+
+# For precise decimal calculations in financial events.
+rust_decimal = { version = "1.36", features = ["serde"] }
