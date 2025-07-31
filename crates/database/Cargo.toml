@@ -4,3 +4,44 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+# ==============================================================================
+# Workspace Dependencies
+# ==============================================================================
+# Depends on core-types to understand the data structures (Kline, Trade, etc.)
+# that it will be saving to and fetching from the database.
+core-types = { path = "../core-types" }
+# Depend on the analytics crate for performance reports
+analytics = { path = "../analytics" }
+
+# ==============================================================================
+# External Dependencies
+# ==============================================================================
+# The core asynchronous SQL toolkit for Rust. Its features are critical.
+sqlx = { version = "0.8", features = [
+    "postgres",                 # Enable the PostgreSQL driver
+    "runtime-tokio-native-tls", # Set the async runtime and TLS implementation
+    "uuid",                     # Enable mapping between sqlx and the `uuid` crate
+    "chrono",                   # Enable mapping for `chrono::DateTime`
+    "rust_decimal",             # Enable mapping for `rust_decimal::Decimal`
+    "json"                      # Enable mapping for `serde_json::Value` (for JSONB columns)
+] }
+
+# High-precision decimal arithmetic
+rust_decimal = { version = "1.34", features = ["db-postgres"] }
+# UUID generation and handling
+uuid = { version = "1.8.0", features = ["v4"] }
+# Date and time handling
+chrono = { version = "0.4.37", features = ["serde"] }
+
+# A modern fork of the `dotenv` crate, used to load the DATABASE_URL from our .env file.
+dotenvy = "0.15"
+
+# For creating structured, specific error types for this crate.
+thiserror = "2.0"
+
+# Required for serializing/deserializing data, especially for the JSONB columns.
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# We explicitly add tokio as a dependency for our async functions.
+tokio = { version = "1", features = ["full"] }

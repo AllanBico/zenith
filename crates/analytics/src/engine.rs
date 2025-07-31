@@ -42,7 +42,10 @@ impl AnalyticsEngine {
         self.calculate_profitability(trades, initial_capital, &mut report)?;
         self.calculate_drawdown(equity_curve, &mut report)?;
         self.calculate_time_metrics(trades, &mut report)?;
-        self.calculate_ratios(equity_curve, &report, &mut report)?;
+        
+        // Create a local copy of the report to avoid borrowing issues
+        let report_copy = report.clone();
+        self.calculate_ratios(equity_curve, &report_copy, &mut report)?;
 
         Ok(report)
     }
@@ -106,14 +109,13 @@ impl AnalyticsEngine {
         equity_curve: &[(DateTime<Utc>, Decimal)],
         report: &mut PerformanceReport,
     ) -> Result<(), AnalyticsError> {
-        let mut peak_equity = Decimal::MIN;
         let mut max_drawdown = Decimal::ZERO;
 
         if equity_curve.is_empty() {
             return Ok(());
         }
         
-        peak_equity = equity_curve[0].1;
+        let mut peak_equity = equity_curve[0].1;
 
         for &(_timestamp, equity) in equity_curve {
             if equity > peak_equity {

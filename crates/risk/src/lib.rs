@@ -14,7 +14,6 @@
 //! - `SimpleRiskManager`: The concrete implementation of our fixed-fractional sizing logic.
 //! - `RiskError`: The specific error types that can be returned from this crate.
 
-use crate::error::RiskError;
 use core_types::{OrderRequest, Signal};
 use events::PortfolioState;
 use rust_decimal::Decimal;

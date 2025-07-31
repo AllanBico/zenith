@@ -93,7 +93,7 @@ impl Strategy for SuperTrend {
         })?;
 
         // Calculate SuperTrend values
-        let (upper_band, lower_band, current_trend) = self.calculate_bands(high, low, close);
+        let (_upper_band, _lower_band, current_trend) = self.calculate_bands(high, low, close);
         
         // Calculate trend strength based on ATR
         let atr = self.atr.next(close);

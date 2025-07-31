@@ -1,5 +1,4 @@
 use crate::error::ConfigError;
-use crate::settings::Config;
 
 // Declare the modules that make up this crate.
 pub mod error;

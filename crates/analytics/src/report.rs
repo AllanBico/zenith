@@ -1,6 +1,31 @@
 use chrono::Duration;
 use rust_decimal::Decimal;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use std::time::Duration as StdDuration;
+
+// Helper module for serializing/deserializing Duration
+mod duration_serde {
+    use super::*;
+    use serde::de::Error;
+
+    pub fn serialize<S>(duration: &Duration, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let secs = duration.num_seconds();
+        let nanos = duration.subsec_nanos();
+        let std_duration = StdDuration::new(secs as u64, nanos as u32);
+        humantime_serde::serialize(&std_duration, serializer)
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Duration, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let std_duration = humantime_serde::deserialize(deserializer)?;
+        Ok(Duration::from_std(std_duration).map_err(D::Error::custom)?)
+    }
+}
 
 /// A comprehensive, standardized report of a strategy's performance.
 ///
@@ -31,7 +56,7 @@ pub struct PerformanceReport {
     pub payoff_ratio: Option<Decimal>, // Option<> because avg_loss can be 0
 
     // IV. Time-Based Metrics
-    #[serde(with = "humantime_serde")]
+    #[serde(with = "duration_serde")]
     pub average_holding_period: Duration,
 }
 

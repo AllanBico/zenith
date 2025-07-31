@@ -55,10 +55,12 @@ impl Strategy for ProbReversion {
         let close_f64 = kline.close.to_f64().ok_or_else(|| 
             StrategyError::InvalidParameters("Failed to convert close to f64".to_string())
         )?;
-        let high_f64 = kline.high.to_f64().ok_or_else(|| 
+        
+        // Convert high/low to f64 but don't use them yet
+        let _high_f64 = kline.high.to_f64().ok_or_else(|| 
             StrategyError::InvalidParameters("Failed to convert high to f64".to_string())
         )?;
-        let low_f64 = kline.low.to_f64().ok_or_else(|| 
+        let _low_f64 = kline.low.to_f64().ok_or_else(|| 
             StrategyError::InvalidParameters("Failed to convert low to f64".to_string())
         )?;
         
@@ -73,7 +75,7 @@ impl Strategy for ProbReversion {
         let bb_lower = Decimal::from_f64(bb.lower).unwrap_or(dec!(0));
         
         // Calculate price change for trend detection
-        let price_change = if self.prev_close > 0.0 {
+        let _price_change = if self.prev_close > 0.0 {
             (close_f64 - self.prev_close) / self.prev_close
         } else {
             0.0

@@ -10,7 +10,6 @@ use uuid::Uuid;
 
 /// The Triple Moving Average Crossover strategy.
 pub struct MACrossover {
-    params: MACrossoverParams,
     ma_fast: Sma,
     ma_slow: Sma,
     trend_filter: Sma,
@@ -35,7 +34,6 @@ impl MACrossover {
             ma_fast: Sma::new(params.ma_fast_period).unwrap(),
             ma_slow: Sma::new(params.ma_slow_period).unwrap(),
             trend_filter: Sma::new(params.trend_filter_period).unwrap(),
-            params,
             prev_fast_ma: None,
             prev_slow_ma: None,
         })
