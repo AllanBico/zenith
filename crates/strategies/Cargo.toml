@@ -4,3 +4,34 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+# ==============================================================================
+# Workspace Dependencies
+# ==============================================================================
+# Depends on core-types to consume `Kline` data and produce `Signal`s.
+core-types = { path = "../core-types" }
+
+# Depends on configuration to receive its parameters. This is a key part of
+# dependency injection; the strategy doesn't load the config, it's GIVEN the config.
+configuration = { path = "../configuration" }
+
+# ==============================================================================
+# External Dependencies
+# ==============================================================================
+# A popular library for calculating technical analysis indicators like MAs, RSI, etc.
+# This prevents us from having to reinvent the wheel for standard financial math.
+# NOTE: This library operates on `f64`s, so we will need to handle the conversion
+# from our high-precision `Decimal` type within the strategy logic.
+ta = "0.5"
+
+# For creating structured, specific error types for this crate.
+thiserror = "2.0"
+
+# For serializing and deserializing strategy state if needed in the future.
+serde = { version = "1.0", features = ["derive"] }
+
+# For generating unique IDs for the `Signal`s our strategies create.
+uuid = { version = "1.8", features = ["v4"] }
+
+# Required because our strategies will perform calculations with Decimal types.
+rust_decimal = "1.35"
+rust_decimal_macros = "1.35"

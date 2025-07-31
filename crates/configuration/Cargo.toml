@@ -1,0 +1,27 @@
+[package]
+name = "configuration"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+# ==============================================================================
+# Workspace Dependencies
+# ==============================================================================
+# Needed for potential future use of core enums or types within config structs.
+core-types = { path = "../core-types" }
+
+# ==============================================================================
+# External Dependencies
+# ==============================================================================
+# The core library for reading configuration from files, environment variables, etc.
+# We enable the 'toml' feature to parse our .toml file
+config = { version = "0.15", features = ["toml"] }
+
+# For serializing and deserializing our configuration structs.
+serde = { version = "1.0", features = ["derive"] }
+
+# For creating structured, specific error types for this crate.
+thiserror = "2.0"
+
+# Required because our config structs will hold Decimal values.
+rust_decimal = "1.35"
