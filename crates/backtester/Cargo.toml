@@ -4,3 +4,42 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+# ==============================================================================
+# Workspace Dependencies
+# ==============================================================================
+# These are all the components the backtester needs to orchestrate.
+core-types = { path = "../core-types" }
+configuration = { path = "../configuration" }
+strategies = { path = "../strategies" }
+risk = { path = "../risk" }
+executor = { path = "../executor" }
+analytics = { path = "../analytics" }
+database = { path = "../database" }
+
+# ==============================================================================
+# External Dependencies
+# ==============================================================================
+# For creating the crate's specific error types.
+thiserror = "2.0"
+
+# The async runtime.
+tokio = { version = "1", features = ["full"] }
+
+# For defining any async traits if needed.
+async-trait = "0.1"
+
+# For generating unique identifiers.
+uuid = { version = "1.7", features = ["v4"] }
+
+# For event types and portfolio state
+events = { path = "../events" }
+
+# For progress bar styling
+indicatif = { version = "0.18", default-features = false }
+
+# For high-precision financial math.
+rust_decimal = "1.35"
+
+# For handling the backtest period dates.
+chrono = "0.4"
+

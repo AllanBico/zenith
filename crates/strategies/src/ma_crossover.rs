@@ -10,6 +10,7 @@ use uuid::Uuid;
 
 /// The Triple Moving Average Crossover strategy.
 pub struct MACrossover {
+    symbol: String,
     ma_fast: Sma,
     ma_slow: Sma,
     trend_filter: Sma,
@@ -22,7 +23,7 @@ impl MACrossover {
     /// Creates a new `MACrossover` instance with the given parameters.
     ///
     /// It performs validation to ensure the parameters are logical.
-    pub fn new(params: MACrossoverParams) -> Result<Self, StrategyError> {
+    pub fn new(params: MACrossoverParams, symbol: String) -> Result<Self, StrategyError> {
         // Validation: Ensure periods are logical.
         if params.ma_fast_period >= params.ma_slow_period {
             return Err(StrategyError::InvalidParameters(
@@ -31,6 +32,7 @@ impl MACrossover {
         }
 
         Ok(Self {
+            symbol,
             ma_fast: Sma::new(params.ma_fast_period).unwrap(),
             ma_slow: Sma::new(params.ma_slow_period).unwrap(),
             trend_filter: Sma::new(params.trend_filter_period).unwrap(),
@@ -82,10 +84,10 @@ impl Strategy for MACrossover {
                     confidence: dec!(1.0), // Full confidence on clear signal
                     order_request: OrderRequest {
                         client_order_id: Uuid::new_v4(),
-                        symbol: "placeholder".to_string(), // The engine will replace this
+                        symbol: self.symbol.clone(),
                         side: OrderSide::Buy,
                         order_type: OrderType::Market,
-                        quantity: dec!(1.0), // The risk manager will resize this
+                        quantity: Decimal::ZERO, // Let the risk manager determine the size
                         price: None,
                     },
                 });
@@ -96,10 +98,10 @@ impl Strategy for MACrossover {
                     confidence: dec!(1.0), // Full confidence on clear signal
                     order_request: OrderRequest {
                         client_order_id: Uuid::new_v4(),
-                        symbol: "placeholder".to_string(), // The engine will replace this
+                        symbol: self.symbol.clone(),
                         side: OrderSide::Sell,
                         order_type: OrderType::Market,
-                        quantity: dec!(1.0), // The risk manager will resize this
+                        quantity: Decimal::ZERO, // Let the risk manager determine the size
                         price: None,
                     },
                 });

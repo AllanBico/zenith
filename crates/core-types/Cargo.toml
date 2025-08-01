@@ -21,3 +21,6 @@ uuid = { version = "1.17", features = ["v4", "serde"] }
 
 # For creating structured, specific error types for this crate.
 thiserror = "1.0"
+
+# For database support in the core types.
+sqlx = { version = "0.8", features = ["postgres", "chrono", "rust_decimal", "uuid", "json"] }

@@ -6,6 +6,7 @@ use rust_decimal::Decimal;
 use serde_json::Value as JsonValue;
 use sqlx::postgres::PgPool;
 use sqlx::postgres::Postgres;
+use sqlx::Row;
 use sqlx::Transaction;
 use uuid::Uuid;
 
@@ -22,19 +23,59 @@ impl DbRepository {
         Self { pool }
     }
 
+    /// Fetches all klines for a given symbol and interval within a date range.
+    pub async fn get_klines_by_date_range(
+        &self,
+        symbol: &str,
+        interval: &str,
+        start_date: DateTime<Utc>,
+        end_date: DateTime<Utc>,
+    ) -> Result<Vec<Kline>, DbError> {
+        let rows = sqlx::query(
+            r#"
+            SELECT open_time, open, high, low, close, volume, close_time
+            FROM klines
+            WHERE symbol = $1 AND interval = $2 AND open_time >= $3 AND open_time <= $4
+            ORDER BY open_time ASC
+            "#,
+        )
+        .bind(symbol)
+        .bind(interval)
+        .bind(start_date)
+        .bind(end_date)
+        .fetch_all(&self.pool)
+        .await?;
+
+        let klines = rows.into_iter().map(|row| {
+            Kline {
+                open_time: row.get("open_time"),
+                open: row.get("open"),
+                high: row.get("high"),
+                low: row.get("low"),
+                close: row.get("close"),
+                volume: row.get("volume"),
+                close_time: row.get("close_time"),
+                interval: interval.to_string(),
+            }
+        }).collect();
+
+        Ok(klines)
+    }
+
     /// Saves a single Kline to the database.
     /// Uses `ON CONFLICT DO NOTHING` to be idempotent, so it can be called repeatedly
     /// without causing errors if the data already exists.
     pub async fn save_kline(&self, symbol: &str, kline: &Kline) -> Result<(), DbError> { // <-- MODIFIED SIGNATURE
         sqlx::query!(
             r#"
-            INSERT INTO klines (symbol, interval, open_time, open, high, low, close, volume)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            INSERT INTO klines (symbol, interval, open_time, close_time, open, high, low, close, volume)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
             ON CONFLICT (symbol, interval, open_time) DO NOTHING
             "#,
-            symbol, // <-- CHANGED from hardcoded string
+            symbol,
             kline.interval,
             kline.open_time,
+            kline.close_time,
             kline.open,
             kline.high,
             kline.low,

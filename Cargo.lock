@@ -179,6 +179,23 @@ checksum = "c08606f8c3cbf4ce6ec8e28fb0014a2c086708fe954eaa885384a6165172e7e8"
 [[package]]
 name = "backtester"
 version = "0.1.0"
+dependencies = [
+ "analytics",
+ "async-trait",
+ "chrono",
+ "configuration",
+ "core-types",
+ "database",
+ "events",
+ "executor",
+ "indicatif",
+ "risk",
+ "rust_decimal",
+ "strategies",
+ "thiserror 2.0.12",
+ "tokio",
+ "uuid",
+]
 
 [[package]]
 name = "backtrace"
@@ -420,6 +437,7 @@ dependencies = [
 name = "configuration"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "config",
  "core-types",
  "rust_decimal",
@@ -500,6 +518,7 @@ dependencies = [
  "rust_decimal",
  "rust_decimal_macros",
  "serde",
+ "sqlx",
  "thiserror 1.0.69",
  "uuid",
 ]
@@ -3572,16 +3591,23 @@ dependencies = [
 name = "zenith"
 version = "0.1.0"
 dependencies = [
+ "analytics",
  "anyhow",
  "api-client",
+ "backtester",
  "chrono",
  "clap",
+ "configuration",
  "core-types",
  "database",
  "dotenvy",
+ "executor",
  "futures",
  "indicatif",
+ "risk",
+ "rust_decimal_macros",
  "sqlx",
+ "strategies",
  "tokio",
 ]
 

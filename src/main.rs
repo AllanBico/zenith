@@ -1,44 +1,36 @@
+use anyhow::Result;
 use api_client::{ApiClient, BinanceClient};
+use backtester::Backtester;
 use chrono::{DateTime, Datelike, NaiveDate, Utc};
 use clap::{Parser, Subcommand};
-// Import database types directly from the database crate
-use database::connection::{connect, run_migrations};
-use database::repository::DbRepository;
+use configuration::load_config;
+use database::{connect, run_migrations, DbRepository};
+use executor::{Portfolio, SimulatedExecutor};
 use futures::future::join_all;
 use indicatif::{ProgressBar, ProgressStyle};
+use risk::SimpleRiskManager;
+use sqlx::types::Decimal;
+use strategies::create_strategy;
 
-/// The main entry point for the Zenith trading application.
 #[tokio::main]
-async fn main() {
-    // Load environment variables from .env file
+async fn main() -> Result<()> {
     dotenvy::dotenv().expect(".env file not found");
 
-    // Initialize the database connection and run migrations
-    let db_pool = connect()
-        .await
-        .expect("Failed to connect to the database");
-    run_migrations(&db_pool)
-        .await
-        .expect("Failed to run database migrations");
+    let db_pool = connect().await?;
+    run_migrations(&db_pool).await?;
 
-    // Parse command-line arguments
     let cli = Cli::parse();
 
-    // Execute the appropriate command
     match cli.command {
-        Commands::Backfill(args) => {
-            if let Err(e) = handle_backfill(args, db_pool).await {
-                eprintln!("Error during backfill: {}", e);
-            }
-        }
+        Commands::Backfill(args) => handle_backfill(args, db_pool).await?,
+        Commands::SingleRun(args) => handle_single_run(args, db_pool).await?,
     }
+
+    Ok(())
 }
 
-// ==============================================================================
-// CLI Structure (Task 4)
-// ==============================================================================
+// ... (CLI struct definitions)
 
-/// A professional-grade, modular trading engine for crypto.
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
 struct Cli {
@@ -48,35 +40,105 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Download historical kline data from an exchange.
+    /// Download historical kline data.
     Backfill(BackfillArgs),
+    /// Run a single backtest using parameters from the config file.
+    SingleRun(SingleRunArgs),
 }
 
 #[derive(Parser)]
 struct BackfillArgs {
-    /// The symbol to download data for (e.g., "BTCUSDT").
     #[arg(long)]
     symbol: String,
-
-    /// The interval of the klines (e.g., "1h", "4h", "1d").
     #[arg(long)]
     interval: String,
-
-    /// The start date for data download (format: YYYY-MM-DD).
     #[arg(long)]
     from: NaiveDate,
-
-    /// The end date for data download (format: YYYY-MM-DD).
     #[arg(long)]
     to: NaiveDate,
 }
 
-// ==============================================================================
-// Backfill Command Logic (Task 5)
-// ==============================================================================
+#[derive(Parser)]
+struct SingleRunArgs {
+    /// Optional start date to override config default (YYYY-MM-DD).
+    #[arg(long)]
+    from: Option<NaiveDate>,
+    /// Optional end date to override config default (YYYY-MM-DD).
+    #[arg(long)]
+    to: Option<NaiveDate>,
+}
 
-/// Handles the orchestration of the backfill process.
-async fn handle_backfill(args: BackfillArgs, db_pool: sqlx::PgPool) -> anyhow::Result<()> {
+
+async fn handle_single_run(args: SingleRunArgs, db_pool: sqlx::PgPool) -> Result<()> {
+    // 1. Load Config
+    let config = load_config(None)?; // None means use default config path
+    println!("Configuration loaded. Running default single backtest...");
+
+    // 2. Set up parameters - using simulation config since there's no backtest config
+    let start_date = args.from.unwrap_or_else(|| {
+        // Default to 30 days ago if not specified
+        let now = Utc::now().date_naive();
+        now.checked_sub_days(chrono::Days::new(30)).unwrap_or(now)
+    });
+    
+    let end_date = args.to.unwrap_or_else(|| {
+        // Default to now if not specified
+        Utc::now().date_naive()
+    });
+    
+    // Use a default symbol and interval since they're not in the config
+    let symbol = "BTCUSDT".to_string();
+    let interval = "1h".to_string();
+
+    println!("Period: {} to {}", start_date, end_date);
+    println!("Symbol: {}, Interval: {}", symbol, interval);
+
+    // 3. Instantiate all components
+    let db_repo = DbRepository::new(db_pool);
+    let analytics_engine = analytics::AnalyticsEngine::new();
+    
+    // Use a default initial capital since it's not in the config
+    let initial_capital = Decimal::from(10000);
+    let portfolio = Portfolio::new(initial_capital);
+    
+    // Create a default simulation config if needed
+    let simulation_config = configuration::settings::Simulation {
+        taker_fee_pct: Decimal::new(1, 3),  // 0.1% taker fee (1 / 10^3)
+        slippage_pct: Decimal::new(5, 4),    // 0.05% slippage (5 / 10^4)
+    };
+    
+    let executor = Box::new(SimulatedExecutor::new(simulation_config));
+    
+    // For now, we'll run a specific strategy. In the future, this could be configurable.
+    let strategy = create_strategy(strategies::StrategyId::MACrossover, &config, &symbol)?;
+    println!("Strategy: MACrossover");
+
+    // 4. Create and run the backtester
+    let mut backtester = Backtester::new(
+        symbol,
+        interval,
+        portfolio,
+        strategy,  // Don't box here, it's already a trait object
+        Box::new(SimpleRiskManager::new(config.risk_management)?),
+        executor,
+        analytics_engine,
+        db_repo,
+    );
+    
+    let report = backtester.run(
+        start_date.and_hms_opt(0,0,0).unwrap().and_local_timezone(Utc).unwrap(),
+        end_date.and_hms_opt(23,59,59).unwrap().and_local_timezone(Utc).unwrap()
+    ).await?;
+
+    // 5. Print the report
+    println!("\n---===[ Backtest Report ]===---");
+    println!("{:#?}", report);
+
+    Ok(())
+}
+
+// ... (handle_backfill and generate_monthly_ranges functions remain unchanged)
+async fn handle_backfill(args: BackfillArgs, db_pool: sqlx::PgPool) -> Result<()> {
     println!(
         "Starting backfill for {} on interval {} from {} to {}",
         args.symbol, args.from, args.interval, args.to
@@ -85,10 +147,8 @@ async fn handle_backfill(args: BackfillArgs, db_pool: sqlx::PgPool) -> anyhow::R
     let db_repo = DbRepository::new(db_pool);
     let api_client = BinanceClient::new();
 
-    // Generate monthly date ranges for fetching data to respect API limits
     let date_ranges = generate_monthly_ranges(args.from, args.to);
     
-    // Set up the progress bar
     let progress_bar = ProgressBar::new(date_ranges.len() as u64);
     progress_bar.set_style(
         ProgressStyle::default_bar()
@@ -96,11 +156,10 @@ async fn handle_backfill(args: BackfillArgs, db_pool: sqlx::PgPool) -> anyhow::R
             .progress_chars("#>-"),
     );
 
-    // Create concurrent tasks for each date range
     let tasks: Vec<_> = date_ranges
         .into_iter()
         .map(|(start, end)| {
-            let api_client_clone = BinanceClient::new(); // Create new client per task
+            let api_client_clone = BinanceClient::new();
             let db_repo_clone = db_repo.clone();
             let symbol = args.symbol.clone();
             let interval = args.interval.clone();
@@ -121,12 +180,10 @@ async fn handle_backfill(args: BackfillArgs, db_pool: sqlx::PgPool) -> anyhow::R
         })
         .collect();
 
-    // Wait for all concurrent tasks to complete
     let results = join_all(tasks).await;
 
     progress_bar.finish_with_message("Backfill complete!");
 
-    // Check for any errors that occurred in the tasks
     for result in results {
         if let Err(e) = result {
             eprintln!("A task failed: {}", e);
@@ -136,7 +193,6 @@ async fn handle_backfill(args: BackfillArgs, db_pool: sqlx::PgPool) -> anyhow::R
     Ok(())
 }
 
-/// Generates a vector of (start_date, end_date) tuples for each month between the from and to dates.
 fn generate_monthly_ranges(
     mut from: NaiveDate,
     to: NaiveDate,
@@ -144,33 +200,35 @@ fn generate_monthly_ranges(
     let mut ranges = Vec::new();
     
     while from <= to {
-        // Calculate the end of the current month
-        let year = from.year();
-        let month = from.month();
-        
-        let (next_month_year, next_month) = if month == 12 {
-            (year + 1, 1)
+        // Calculate the first day of the next month
+        let next_month = if from.month() == 12 {
+            from.with_year(from.year() + 1)
+                .and_then(|d| d.with_month(1))
         } else {
-            (year, month + 1)
+            from.with_month(from.month() + 1)
         };
         
-        // Create the first day of next month, then subtract one day to get the last day of current month
-        let end_of_month = NaiveDate::from_ymd_opt(next_month_year, next_month, 1)
-            .unwrap_or_else(|| NaiveDate::from_ymd_opt(next_month_year + 1, 1, 1).unwrap())
-            .pred_opt()
-            .unwrap();
+        // Calculate the last day of the current month
+        let end_of_month = next_month
+            .and_then(|d| d.pred_opt())
+            .unwrap_or_else(|| {
+                // If we can't get the previous day, use the last day of the current year
+                from.with_month(12)
+                    .and_then(|d| d.with_day(31))
+                    .unwrap_or(from) // Fallback to the original date if all else fails
+            });
         
+        // Use the minimum of end_of_month and the provided 'to' date
         let end_date = std::cmp::min(end_of_month, to);
         
-        // Add the range from start of 'from' to end of 'end_date'
-        ranges.push((
-            from.and_hms_opt(0, 0, 0).unwrap().and_utc(),
-            end_date.and_hms_opt(23, 59, 59).unwrap().and_utc(),
-        ));
+        // Convert to DateTime<Utc> and add to ranges
+        let start_dt = from.and_hms_opt(0, 0, 0).unwrap().and_utc();
+        let end_dt = end_date.and_hms_opt(23, 59, 59).unwrap().and_utc();
         
-        // Move to the next day after end_date
+        ranges.push((start_dt, end_dt));
+        
+        // Move to the first day of the next month
         from = end_date.succ_opt().unwrap_or(end_date);
     }
-    
     ranges
 }

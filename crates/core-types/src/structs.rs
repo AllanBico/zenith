@@ -5,7 +5,8 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 /// Represents a single candlestick bar (K-line).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, sqlx::FromRow)]
+#[sqlx(type_name = "klines")]
 pub struct Kline {
     pub open_time: DateTime<Utc>,
     pub open: Decimal,

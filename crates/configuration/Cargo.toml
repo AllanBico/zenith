@@ -26,3 +26,6 @@ thiserror = "2.0"
 # Required because our config structs will hold Decimal values.
 rust_decimal = "1.35"
 rust_decimal_macros = "1.35"
+
+# For date/time handling in configuration
+chrono = { version = "0.4", features = ["serde"] }

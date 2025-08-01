@@ -49,7 +49,23 @@ impl RiskManager for SimpleRiskManager {
             return Err(RiskError::InsufficientEquity(portfolio_state.total_value));
         }
 
-        // --- 2. Calculate Stop-Loss Price and Distance ---
+        // --- 2. Check for existing position ---
+        let current_position = portfolio_state.positions.iter()
+            .find(|p| p.symbol == signal.order_request.symbol);
+
+        // If we have a position in the opposite direction, close it first
+        if let Some(position) = current_position {
+            if position.side != signal.order_request.side {
+                // Create a market order to close the entire position
+                let mut close_order = signal.order_request.clone();
+                close_order.quantity = position.quantity;
+                close_order.side = position.side.opposite();
+                return Ok(close_order);
+            }
+            // If we have a position in the same direction, we'll add to it below
+        }
+
+        // --- 3. Calculate Stop-Loss Price and Distance ---
         let stop_loss_price = match signal.order_request.side {
             OrderSide::Buy => entry_price * (dec!(1) - self.params.stop_loss_pct),
             OrderSide::Sell => entry_price * (dec!(1) + self.params.stop_loss_pct),
@@ -62,7 +78,7 @@ impl RiskManager for SimpleRiskManager {
             ));
         }
 
-        // --- 3. Calculate Risk Capital and Final Quantity ---
+        // --- 4. Calculate Risk Capital and Final Quantity ---
         // Determine the total capital to risk on this specific trade.
         let risk_capital = portfolio_state.total_value * self.params.risk_per_trade_pct;
 
@@ -70,11 +86,42 @@ impl RiskManager for SimpleRiskManager {
         // A confidence of 0.5 means we risk half the standard amount.
         let scaled_risk_capital = risk_capital * signal.confidence;
 
-        // Calculate the final position size.
-        // Quantity = (Total Capital to Risk) / (Per-Unit Risk)
-        let quantity = scaled_risk_capital / stop_loss_distance;
+        // Calculate the target position size in quote currency (USDT)
+        let position_value = scaled_risk_capital / self.params.stop_loss_pct;
+        
+        // Ensure we don't try to allocate more than our available equity
+        let max_position_value = portfolio_state.cash * dec!(0.95); // Leave some buffer
+        let position_value = position_value.min(max_position_value);
+        
+        // Convert position value to base currency (e.g., BTC)
+        let target_quantity = if entry_price > Decimal::ZERO {
+            position_value / entry_price
+        } else {
+            Decimal::ZERO
+        };
+        
+        // Round to 6 decimal places to avoid precision issues with very small quantities
+        let target_quantity = target_quantity.round_dp(6);
+        
+        // Debug logging
+        println!("Risk calculation - Entry: {}, Risk Capital: {}, Position Value: {}, Max Allowed: {}, Target Qty: {}",
+            entry_price, scaled_risk_capital, position_value, max_position_value, target_quantity);
+        
+        // If we already have a position, calculate how much more to add
+        let quantity = if let Some(position) = current_position {
+            // Don't reduce position size, only increase if needed
+            if target_quantity > position.quantity {
+                target_quantity - position.quantity
+            } else {
+                // If we're not increasing the position, return the original signal
+                // which will be a no-op (same side, same or smaller size)
+                return Ok(signal.order_request.clone());
+            }
+        } else {
+            target_quantity
+        };
 
-        // --- 4. Construct Final Order Request ---
+        // --- 5. Construct Final Order Request ---
         // Create a new order request, using the original as a template but
         // overriding the quantity with our calculated, risk-managed value.
         let mut final_order = signal.order_request.clone();

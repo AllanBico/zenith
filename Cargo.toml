@@ -24,9 +24,15 @@ resolver = "2"
 # Workspace Dependencies
 # ==============================================================================
 # The application orchestrates these crates to perform its tasks.
-database = { path = "crates/database" }
+analytics = { path = "crates/analytics" }
 api-client = { path = "crates/api-client" }
+backtester = { path = "crates/backtester" }
+configuration = { path = "crates/configuration" }
 core-types = { path = "crates/core-types" }
+database = { path = "crates/database" }
+executor = { path = "crates/executor" }
+risk = { path = "crates/risk" }
+strategies = { path = "crates/strategies" }
 
 # ==============================================================================
 # External Dependencies
@@ -40,6 +46,9 @@ clap = { version = "4.5", features = ["derive"] }
 
 # For loading the DATABASE_URL and other secrets from the .env file at startup.
 dotenvy = "0.15"
+
+# For decimal literals in Rust (e.g., dec!(1.234))
+rust_decimal_macros = "1.37"
 
 # Provides utilities for working with async futures, essential for concurrent downloads.
 futures = "0.3"

@@ -20,13 +20,14 @@ pub enum StrategyId {
 pub fn create_strategy(
     id: StrategyId,
     config: &Config,
+    symbol: &str,
 ) -> Result<Box<dyn Strategy>, StrategyError> {
     // With all strategies implemented, we can use a complete match statement.
     // The compiler will now error if a new StrategyId is added but not handled here.
     match id {
         StrategyId::MACrossover => {
             let params = config.strategies.ma_crossover.clone();
-            Ok(Box::new(MACrossover::new(params)?))
+            Ok(Box::new(MACrossover::new(params, symbol.to_string())?))
         }
         StrategyId::SuperTrend => {
             let params = config.strategies.super_trend.clone();

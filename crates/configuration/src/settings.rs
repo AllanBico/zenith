@@ -1,12 +1,27 @@
 use rust_decimal::Decimal;
 use serde::Deserialize;
-
+use chrono::NaiveDate;
 /// The root configuration structure for the entire application.
 #[derive(Debug, Clone, Deserialize)]
 pub struct Config {
     pub simulation: Simulation,
     pub risk_management: RiskManagement,
     pub strategies: Strategies,
+}
+
+/// Contains parameters for a single backtest run.
+#[derive(Debug, Clone, Deserialize)]
+pub struct Backtest {
+    /// The symbol to use for the backtest (e.g., "BTCUSDT").
+    pub symbol: String,
+    /// The timeframe interval to use (e.g., "1h").
+    pub interval: String,
+    /// The initial starting capital for the simulation.
+    pub initial_capital: Decimal,
+    /// The default start date for the backtest period.
+    pub start_date: NaiveDate,
+    /// The default end date for the backtest period.
+    pub end_date: NaiveDate,
 }
 
 /// Contains parameters for the backtesting and simulation engine.

@@ -6,6 +6,18 @@
 # ==============================================================================
 
 # ------------------------------------------------------------------------------
+# Default Backtest Configuration
+#
+# Parameters for the `single-run` command.
+# ------------------------------------------------------------------------------
+[backtest]
+symbol = "BTCUSDT"
+interval = "1h"
+initial_capital = 10000.0
+start_date = "2025-01-01"
+end_date = "2025-01-31"
+
+# ------------------------------------------------------------------------------
 # Simulation Engine Parameters
 #
 # These rules govern the behavior of the backtester's virtual exchange.
@@ -25,13 +37,12 @@ slippage_pct = 0.1
 # ------------------------------------------------------------------------------
 [risk_management]
 # The fraction of the total portfolio equity to risk per trade.
-# 0.01 means 1% of equity will be at risk on any given trade.
-risk_per_trade_pct = 0.01
+# 0.005 means 0.5% of equity will be at risk on any given trade.
+risk_per_trade_pct = 0.005
 
 # The distance to the stop-loss, used for calculating position size.
-# 0.02 means the stop-loss is assumed to be 2% away from the entry price.
-stop_loss_pct = 0.02
-
+# 0.01 means the stop-loss is assumed to be 1% away from the entry price.
+stop_loss_pct = 0.01
 
 # ------------------------------------------------------------------------------
 # Strategy Parameters
@@ -42,9 +53,9 @@ stop_loss_pct = 0.02
 # - Fast/Slow MA for the signal.
 # - Trend Filter MA to ensure we only trade with the larger trend.
 [strategies.ma_crossover]
-ma_fast_period = 10
-ma_slow_period = 50
-trend_filter_period = 200
+ma_fast_period = 1
+ma_slow_period = 2
+trend_filter_period = 2
 
 # Parameters for the SuperTrend strategy with an ADX filter.
 # - SuperTrend is calculated from ATR.
