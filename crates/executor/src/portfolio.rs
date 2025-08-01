@@ -6,6 +6,7 @@ use uuid::Uuid;
 use chrono::Utc;
 
 /// Manages the state of a trading account, including cash, positions, and equity.
+/// Its sole responsibility is to accurately reflect the current state based on trade executions.
 #[derive(Debug, Clone)]
 pub struct Portfolio {
     pub cash: Decimal,
@@ -22,7 +23,7 @@ impl Portfolio {
     }
 
     /// Updates the portfolio state based on a trade execution.
-    /// This is the core logic that handles opening, closing, and modifying positions.
+    /// This is the core state transition logic. It does not calculate P&L, it only mutates state.
     pub fn update_with_execution(
         &mut self,
         execution: &Execution,
@@ -42,7 +43,7 @@ impl Portfolio {
         if self.cash.is_sign_negative() {
             return Err(ExecutorError::InsufficientCash {
                 required: cost.to_string(),
-                available: (self.cash + cost).to_string(),
+                available: (self.cash + cost + execution.fee).to_string(), // Add fee back for display
             });
         }
 
@@ -54,13 +55,13 @@ impl Portfolio {
                 symbol: symbol.clone(),
                 side: execution.side,
                 quantity: Decimal::ZERO,
-                entry_price: Decimal::ZERO,
-                unrealized_pnl: Decimal::ZERO,
+                entry_price: Decimal::ZERO, // Will be calculated below
+                unrealized_pnl: Decimal::ZERO, // Will be calculated by the backtester loop
                 last_updated: Utc::now(),
             }
         });
-        
-        let is_closing_trade = position.side != execution.side;
+
+        let is_closing_trade = position.quantity.is_sign_positive() && position.side != execution.side;
 
         if is_closing_trade {
             // Logic for closing or reducing a position.
@@ -77,6 +78,8 @@ impl Portfolio {
             let existing_value = position.entry_price * position.quantity;
             let new_value = execution.price * execution.quantity;
             let total_quantity = position.quantity + execution.quantity;
+
+            position.side = execution.side; // Ensure side is correct if opening from flat
             
             if !total_quantity.is_zero() {
                 position.entry_price = (existing_value + new_value) / total_quantity;
@@ -84,9 +87,9 @@ impl Portfolio {
             position.quantity += execution.quantity;
         }
 
-        position.last_updated = Utc::now();
-        
-        // If position quantity is zero after an update, remove it.
+        position.last_updated = execution.timestamp;
+
+        // If position quantity is zero after an update, remove it from the map.
         if position.quantity.is_zero() {
             self.positions.remove(symbol);
         }
@@ -95,7 +98,7 @@ impl Portfolio {
     }
 
     /// Calculates the total equity of the portfolio at a given set of market prices.
-    /// Equity = Cash + Value of all open positions.
+    /// Equity = Cash + Market Value of all open positions.
     pub fn calculate_total_equity(
         &self,
         market_prices: &HashMap<String, Decimal>,
@@ -107,13 +110,23 @@ impl Portfolio {
                 ExecutorError::PortfolioError(format!("Missing market price for symbol: {}", symbol))
             })?;
             
-            let pnl_per_unit = *current_price - position.entry_price;
-            let position_pnl = pnl_per_unit * position.quantity;
+            // For long positions, value is price * qty. For short, it's more complex,
+            // but for equity calculation, we care about the value of closing it.
+            // A simpler way is (entry_value + unrealized_pnl).
+            let pnl_per_unit = match position.side {
+                OrderSide::Buy => *current_price - position.entry_price,
+                OrderSide::Sell => position.entry_price - *current_price,
+            };
             
-            let market_value = (position.entry_price * position.quantity) + position_pnl;
+            let market_value = (position.entry_price * position.quantity) + (pnl_per_unit * position.quantity);
             positions_value += market_value;
         }
 
         Ok(self.cash + positions_value)
+    }
+
+    /// A simple utility to get a snapshot of a single position.
+    pub fn get_position(&self, symbol: &str) -> Option<&Position> {
+        self.positions.get(symbol)
     }
 }
