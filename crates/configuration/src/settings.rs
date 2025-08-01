@@ -7,6 +7,8 @@ pub struct Config {
     pub simulation: Simulation,
     pub risk_management: RiskManagement,
     pub strategies: Strategies,
+    /// Configuration for backtesting parameters
+    pub backtest: Backtest,
 }
 
 /// Contains parameters for a single backtest run.
