@@ -20,3 +20,38 @@ members = [
 resolver = "2"
 
 [dependencies]
+# ==============================================================================
+# Workspace Dependencies
+# ==============================================================================
+# The application orchestrates these crates to perform its tasks.
+database = { path = "crates/database" }
+api-client = { path = "crates/api-client" }
+core-types = { path = "crates/core-types" }
+
+# ==============================================================================
+# External Dependencies
+# ==============================================================================
+# The primary async runtime for the application.
+tokio = { version = "1", features = ["full"] }
+
+# For building a powerful and ergonomic command-line interface.
+# The "derive" feature allows us to define our CLI with simple structs.
+clap = { version = "4.5", features = ["derive"] }
+
+# For loading the DATABASE_URL and other secrets from the .env file at startup.
+dotenvy = "0.15"
+
+# Provides utilities for working with async futures, essential for concurrent downloads.
+futures = "0.3"
+
+# For creating beautiful and functional command-line progress bars.
+indicatif = { version = "0.18", features = ["tokio"] }
+
+# For handling dates provided as command-line arguments.
+chrono = "0.4"
+
+# For flexible error handling
+anyhow = "1.0"
+
+# For database access
+sqlx = { version = "0.8", features = ["runtime-tokio-native-tls", "postgres", "chrono", "uuid", "migrate"] }

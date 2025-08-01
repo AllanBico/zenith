@@ -25,20 +25,20 @@ impl DbRepository {
     /// Saves a single Kline to the database.
     /// Uses `ON CONFLICT DO NOTHING` to be idempotent, so it can be called repeatedly
     /// without causing errors if the data already exists.
-    pub async fn save_kline(&self, kline: &Kline) -> Result<(), DbError> {
+    pub async fn save_kline(&self, symbol: &str, kline: &Kline) -> Result<(), DbError> { // <-- MODIFIED SIGNATURE
         sqlx::query!(
             r#"
             INSERT INTO klines (symbol, interval, open_time, open, high, low, close, volume)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
             ON CONFLICT (symbol, interval, open_time) DO NOTHING
             "#,
-            "BTC/USDT", // Placeholder until symbol management is more robust
+            symbol, // <-- CHANGED from hardcoded string
             kline.interval,
             kline.open_time,
-            &kline.open,
-            &kline.high,
-            &kline.low,
-            &kline.close,
+            kline.open,
+            kline.high,
+            kline.low,
+            kline.close,
             kline.volume
         )
         .execute(&self.pool)
@@ -86,6 +86,7 @@ impl DbRepository {
         Ok(())
     }
 
+    
     /// Saves a full performance report linked to a specific backtest run.
     pub async fn save_performance_report(
         &self,
