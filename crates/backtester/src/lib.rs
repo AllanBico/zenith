@@ -132,7 +132,12 @@ impl Backtester {
 
         // 4. Generate Final Report
         let initial_capital = self.portfolio.cash; // More accurate initial capital
-        let report = self.analytics_engine.calculate(&completed_trades, &equity_curve, initial_capital)?;
+        let report = self.analytics_engine.calculate(
+            &completed_trades,
+            &equity_curve,
+            initial_capital,
+            &self.interval,
+        )?;
         
         Ok(report)
     }

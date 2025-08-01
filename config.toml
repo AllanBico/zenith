@@ -12,8 +12,8 @@
 # ------------------------------------------------------------------------------
 [backtest]
 symbol = "BTCUSDT"
-interval = "1h"
-initial_capital = 10000.0
+interval = "15m"
+initial_capital = 1000.0
 start_date = "2025-01-01"
 end_date = "2025-06-30"
 
@@ -55,7 +55,7 @@ stop_loss_pct = 0.01
 [strategies.ma_crossover]
 ma_fast_period = 10
 ma_slow_period = 50
-trend_filter_period = 200
+trend_filter_period = 100
 
 # Parameters for the SuperTrend strategy with an ADX filter.
 # - SuperTrend is calculated from ATR.

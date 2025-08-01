@@ -10,4 +10,7 @@ pub enum AnalyticsError {
 
     #[error("An unexpected error occurred during analytics calculation: {0}")]
     InternalError(String),
+    
+    #[error("Error in calculation: {0}")]
+    Calculation(String),
 }

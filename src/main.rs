@@ -125,7 +125,7 @@ async fn handle_single_run(args: SingleRunArgs, db_pool: sqlx::PgPool) -> Result
     
     // Use default values for symbol and interval
     let symbol = "BTCUSDT".to_string();
-    let interval = "1h".to_string();
+    let interval = "15m".to_string();
 
     println!("Period: {} to {}", start_date, end_date);
     println!("Symbol: {}, Interval: {}", symbol, interval);
@@ -134,7 +134,7 @@ async fn handle_single_run(args: SingleRunArgs, db_pool: sqlx::PgPool) -> Result
     let analytics_engine = analytics::AnalyticsEngine::new();
     
     // Use a default initial capital since it's not in the config
-    let initial_capital = rust_decimal_macros::dec!(10000.0);
+    let initial_capital = rust_decimal_macros::dec!(1000.0);
     let portfolio = Portfolio::new(initial_capital);
     
     let executor = Box::new(SimulatedExecutor::new(config.simulation.clone()));
