@@ -1,0 +1,28 @@
+# ==============================================================================
+# Zenith Optimizer Job Configuration
+#
+# This file defines a single optimization experiment.
+# ==============================================================================
+
+# --- Base Settings ---
+# Defines the core context for the optimization job.
+[base_config]
+strategy_id = "MACrossover" # Must match a StrategyId enum variant
+symbol = "BTCUSDT"
+interval = "1h"
+
+# --- Parameter Space ---
+# Defines the ranges of parameters to be tested. The optimizer will generate
+# every possible combination of these parameters.
+[parameter_space]
+
+# Use a discrete list of values for the fast MA period.
+ma_fast_period = [5, 8, 10, 12]
+
+# Use a linear range for the slow MA period.
+# This will generate: 20, 25, 30, 35, 40, 45, 50
+ma_slow = { start = 20, end = 50, step = 5 }
+
+# The trend filter is not part of this optimization and will be taken
+# from the default `config.toml`. If we wanted to optimize it, we would add:
+# trend_filter_period = { start = 150, end = 250, step = 50 }

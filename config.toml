@@ -53,9 +53,9 @@ stop_loss_pct = 0.01
 # - Fast/Slow MA for the signal.
 # - Trend Filter MA to ensure we only trade with the larger trend.
 [strategies.ma_crossover]
-ma_fast_period = 1
-ma_slow_period = 2
-trend_filter_period = 2
+ma_fast_period = 10
+ma_slow_period = 50
+trend_filter_period = 200
 
 # Parameters for the SuperTrend strategy with an ADX filter.
 # - SuperTrend is calculated from ATR.

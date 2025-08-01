@@ -9,14 +9,21 @@ use sqlx::postgres::Postgres;
 use sqlx::Row;
 use sqlx::Transaction;
 use uuid::Uuid;
-
+use sqlx::FromRow;
 /// The `DbRepository` provides a high-level, application-specific interface
 /// to the database. It encapsulates all SQL queries and data access logic.
 #[derive(Debug, Clone)]
 pub struct DbRepository {
     pool: PgPool,
 }
-
+// This struct represents a row fetched from the backtest_runs table.
+#[derive(FromRow, Debug, Clone)]
+pub struct DbBacktestRun {
+    pub run_id: Uuid,
+    pub job_id: Uuid,
+    pub parameters: JsonValue,
+    pub run_status: String,
+}
 impl DbRepository {
     /// Creates a new `DbRepository` with a shared database connection pool.
     pub fn new(pool: PgPool) -> Self {
@@ -60,6 +67,27 @@ impl DbRepository {
         }).collect();
 
         Ok(klines)
+    }
+
+     /// Fetches all backtest runs for a given job that have a 'Pending' status.
+     pub async fn get_pending_runs(&self, job_id: Uuid) -> Result<Vec<DbBacktestRun>, DbError> {
+        let runs = sqlx::query_as::<_, DbBacktestRun>(
+            "SELECT run_id, job_id, parameters, run_status FROM backtest_runs WHERE job_id = $1 AND run_status = 'Pending'"
+        )
+        .bind(job_id)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(runs)
+    }
+
+    /// Updates the status of a specific backtest run.
+    pub async fn update_run_status(&self, run_id: Uuid, status: &str) -> Result<(), DbError> {
+        sqlx::query("UPDATE backtest_runs SET run_status = $1 WHERE run_id = $2")
+            .bind(status)
+            .bind(run_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
     }
 
     /// Saves a single Kline to the database.

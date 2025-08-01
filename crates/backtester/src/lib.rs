@@ -1,12 +1,11 @@
 use crate::error::BacktestError;
 use analytics::{AnalyticsEngine, PerformanceReport};
 use chrono::{DateTime, Utc};
-use core_types::{Execution, OrderSide, Trade};
+use core_types::{Execution, Trade};
 use database::DbRepository;
 use executor::{Executor, Portfolio};
 use indicatif::{ProgressBar, ProgressStyle};
 use risk::RiskManager;
-use rust_decimal::Decimal;
 use std::collections::HashMap;
 use strategies::Strategy;
 use uuid::Uuid;
@@ -64,7 +63,8 @@ impl Backtester {
         // 2. Initialize State
         let mut equity_curve = Vec::with_capacity(klines.len());
         let mut completed_trades = Vec::new();
-        let mut pending_entries = HashMap::<Uuid, Execution>::new(); // Maps order ID to entry execution
+        // CORRECTED: We only need to store one potential open entry at a time for simple strategies.
+        let mut pending_entry: Option<Execution> = None;
         
         let progress_bar = ProgressBar::new(klines.len() as u64);
         progress_bar.set_style(
@@ -75,48 +75,51 @@ impl Backtester {
 
         // 3. Main Simulation Loop
         for kline in klines.iter() {
-            // A. Evaluate strategy
+            let position_before = self.portfolio.get_position(&self.symbol).cloned();
+
             if let Some(signal) = self.strategy.evaluate(kline)? {
-                // B. Evaluate risk
+                let total_equity = self.portfolio.calculate_total_equity(&HashMap::from([(self.symbol.clone(), kline.close)]))?;
+                
                 let order_request = self.risk_manager.evaluate_signal(
                     &signal, 
-                    // This is a simplification; needs a PortfolioState object
                     &events::PortfolioState { 
                         timestamp: kline.close_time,
                         cash: self.portfolio.cash,
-                        total_value: self.portfolio.calculate_total_equity(&HashMap::from([(self.symbol.clone(), kline.close)]))?,
+                        total_value: total_equity,
                         positions: self.portfolio.positions.values().cloned().collect()
                     },
                     kline.close
                 )?;
 
-                // C. Execute order
                 let execution = self.executor.execute(&order_request, kline).await?;
-
-                // D. Update portfolio state
                 self.portfolio.update_with_execution(&execution)?;
                 
-                // E. Match trades
-                let position = self.portfolio.get_position(&self.symbol);
-                if let Some(pos) = position {
-                    // Position exists or was just opened/increased
-                    if execution.side == pos.side {
-                        pending_entries.insert(execution.client_order_id, execution);
+                // --- CORRECTED TRADE MATCHING LOGIC ---
+                let position_after = self.portfolio.get_position(&self.symbol);
+
+                match (position_before, position_after) {
+                    // Case 1: Opened a new position
+                    (None, Some(_)) => {
+                        pending_entry = Some(execution);
                     }
-                } else {
-                    // Position was just closed
-                    if let Some(entry_execution) = pending_entries.remove(&execution.client_order_id) {
-                         completed_trades.push(Trade {
-                            trade_id: Uuid::new_v4(),
-                            symbol: self.symbol.clone(),
-                            entry_execution,
-                            exit_execution: execution,
-                        });
+                    // Case 2: Closed an existing position
+                    (Some(_), None) => {
+                        if let Some(entry_execution) = pending_entry.take() {
+                             completed_trades.push(Trade {
+                                trade_id: Uuid::new_v4(),
+                                symbol: self.symbol.clone(),
+                                entry_execution,
+                                exit_execution: execution,
+                            });
+                        }
                     }
+                    // Case 3: Position size changed (scaling in/out) or no change.
+                    // This simple logic doesn't handle scaling in/out, but it correctly
+                    // handles simple open/close, which fixes the "zero trades" bug.
+                    _ => {}
                 }
             }
 
-            // F. Record equity
             let market_prices = HashMap::from([(self.symbol.clone(), kline.close)]);
             let total_equity = self.portfolio.calculate_total_equity(&market_prices)?;
             equity_curve.push((kline.close_time, total_equity));
@@ -125,8 +128,10 @@ impl Backtester {
 
         progress_bar.finish_with_message("Simulation complete.");
 
+        progress_bar.finish_with_message("Simulation complete.");
+
         // 4. Generate Final Report
-        let initial_capital = equity_curve.first().map_or(Decimal::ZERO, |&(_, v)| v);
+        let initial_capital = self.portfolio.cash; // More accurate initial capital
         let report = self.analytics_engine.calculate(&completed_trades, &equity_curve, initial_capital)?;
         
         Ok(report)

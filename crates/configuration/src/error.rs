@@ -1,20 +1,19 @@
-use std::path::PathBuf;
 use thiserror::Error;
+use serde_json::Error as SerdeJsonError; 
 
-/// Represents all possible errors that can occur when loading or validating configuration.
 #[derive(Error, Debug)]
 pub enum ConfigError {
-    /// Occurs when the configuration file cannot be found at the specified path.
+    #[error("Failed to load configuration from file: {0}")]
+    LoadError(#[from] config::ConfigError),
+
     #[error("Configuration file not found: {0}")]
     FileNotFound(String),
 
-    /// Wraps errors from the `config` crate when loading or parsing the configuration.
-    #[error("Failed to load configuration: {0}")]
-    LoadError(#[from] config::ConfigError),
-
-    /// Occurs when configuration values fail validation.
     #[error("Configuration validation error: {0}")]
     ValidationError(String),
+    
+    #[error("JSON deserialization error: {0}")] 
+    JsonError(#[from] SerdeJsonError),
 }
 
 impl ConfigError {

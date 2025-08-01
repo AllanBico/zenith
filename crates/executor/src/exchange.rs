@@ -1,10 +1,8 @@
 use crate::error::ExecutorError;
-use crate::portfolio::Portfolio;
 use async_trait::async_trait;
 use configuration::Simulation;
 use core_types::{Execution, Kline, OrderRequest, OrderSide};
 use rust_decimal::Decimal;
-use rust_decimal_macros::dec;
 use uuid::Uuid;
 use chrono::Utc;
 

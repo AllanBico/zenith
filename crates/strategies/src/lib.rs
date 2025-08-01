@@ -31,11 +31,14 @@ pub mod super_trend;
 
 // Re-export the key components to create a clean, public-facing API.
 pub use error::StrategyError;
-pub use factory::{create_strategy, StrategyId};
+pub use factory::create_strategy;
 pub use funding_rate_arb::FundingRateArb;
 pub use ma_crossover::MACrossover;
 pub use prob_reversion::ProbReversion;
 pub use super_trend::SuperTrend;
+
+// Re-export StrategyId from core_types
+pub use core_types::enums::StrategyId;
 
 use core_types::{Kline, Signal};
 

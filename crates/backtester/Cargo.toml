@@ -34,7 +34,7 @@ uuid = { version = "1.7", features = ["v4"] }
 # For event types and portfolio state
 events = { path = "../events" }
 
-# For progress bar styling
+# For progress bar display and styling
 indicatif = { version = "0.18", default-features = false }
 
 # For high-precision financial math.

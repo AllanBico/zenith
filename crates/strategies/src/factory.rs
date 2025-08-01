@@ -1,19 +1,11 @@
 use crate::error::StrategyError;
-use crate::funding_rate_arb::FundingRateArb; // <-- ADD THIS LINE
+use crate::funding_rate_arb::FundingRateArb;
 use crate::ma_crossover::MACrossover;
 use crate::prob_reversion::ProbReversion;
 use crate::super_trend::SuperTrend;
 use crate::Strategy;
 use configuration::Config;
-use serde::Deserialize;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
-pub enum StrategyId {
-    MACrossover,
-    SuperTrend,
-    ProbReversion,
-    FundingRateArb,
-}
+use core_types::enums::StrategyId;
 
 /// Creates a new strategy instance based on the provided ID and configuration.
 // ... (documentation is unchanged)

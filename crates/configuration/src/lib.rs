@@ -1,4 +1,6 @@
 use std::path::Path;
+pub mod optimizer_config;
+pub use optimizer_config::{OptimizerConfig, ParameterRange, BaseConfig};
 
 use rust_decimal_macros::dec;
 use crate::error::ConfigError;
@@ -83,4 +85,11 @@ fn validate_config(config: &Config) -> Result<(), ConfigError> {
     // Add more validation as needed
 
     Ok(())
+}
+/// Loads the optimizer configuration from a specific TOML file path.
+pub fn load_optimizer_config(path: &Path) -> Result<OptimizerConfig, ConfigError> {
+    let builder = config::Config::builder()
+        .add_source(config::File::from(path))
+        .build()?;
+    builder.try_deserialize::<OptimizerConfig>().map_err(Into::into)
 }
