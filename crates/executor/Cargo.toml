@@ -1,0 +1,37 @@
+[package]
+name = "executor"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+# ==============================================================================
+# Workspace Dependencies
+# ==============================================================================
+# Depends on core-types to understand the data structures it manipulates,
+# like `Position`, `OrderRequest`, and `Execution`.
+core-types = { path = "../core-types" }
+
+# Depends on configuration to get the simulation parameters like fees and slippage.
+configuration = { path = "../configuration" }
+
+# ==============================================================================
+# External Dependencies
+# ==============================================================================
+# For all high-precision financial calculations.
+rust_decimal = { version = "1.35", features = ["serde"] }
+rust_decimal_macros = "1.35"
+
+# For defining the crate's specific error types.
+thiserror = "2.0"
+
+# For deriving Serialize/Deserialize on any potential future structs.
+serde = { version = "1.0", features = ["derive"] }
+
+# For defining our `Executor` trait with async functions.
+async-trait = "0.1"
+
+# For generating unique IDs for new positions.
+uuid = { version = "1.8", features = ["v4", "serde"] }
+
+# For timestamps on position updates.
+chrono = "0.4"

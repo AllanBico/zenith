@@ -6,6 +6,19 @@
 # ==============================================================================
 
 # ------------------------------------------------------------------------------
+# Simulation Engine Parameters
+#
+# These rules govern the behavior of the backtester's virtual exchange.
+# ------------------------------------------------------------------------------
+[simulation]
+# Taker Fee: The fee charged for market orders. (e.g., Binance Futures is 0.04%)
+taker_fee_pct = 0.0004
+
+# Slippage: A simple model assuming slippage is a percentage of the bar's range.
+# 0.1 means we assume a 10% worse fill from the close price, in the direction of the bar's range.
+slippage_pct = 0.1
+
+# ------------------------------------------------------------------------------
 # Risk Management
 #
 # These rules govern how individual trades are sized.

@@ -423,6 +423,7 @@ dependencies = [
  "config",
  "core-types",
  "rust_decimal",
+ "rust_decimal_macros",
  "serde",
  "thiserror 2.0.12",
 ]
@@ -699,6 +700,21 @@ dependencies = [
  "rust_decimal",
  "serde",
  "thiserror 2.0.12",
+]
+
+[[package]]
+name = "executor"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "configuration",
+ "core-types",
+ "rust_decimal",
+ "rust_decimal_macros",
+ "serde",
+ "thiserror 2.0.12",
+ "uuid",
 ]
 
 [[package]]

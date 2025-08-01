@@ -4,11 +4,22 @@ use serde::Deserialize;
 /// The root configuration structure for the entire application.
 #[derive(Debug, Clone, Deserialize)]
 pub struct Config {
+    pub simulation: Simulation,
     pub risk_management: RiskManagement,
     pub strategies: Strategies,
-    // Placeholders for future configurations
-    // pub database: DatabaseConfig,
-    // pub api: ApiConfig,
+}
+
+/// Contains parameters for the backtesting and simulation engine.
+#[derive(Debug, Clone, Deserialize)]
+pub struct Simulation {
+    /// The trading fees charged by the exchange for a "taker" order.
+    /// 0.0004 corresponds to 0.04%.
+    pub taker_fee_pct: Decimal,
+    
+    /// The assumed price slippage for market orders.
+    /// This is a simple model where slippage is a percentage of the bar's high-low range.
+    /// 0.1 means we assume we get a price that is 10% worse than the close.
+    pub slippage_pct: Decimal,
 }
 
 /// Contains parameters for trade-level risk management.

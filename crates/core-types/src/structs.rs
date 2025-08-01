@@ -37,6 +37,7 @@ pub struct Execution {
     pub execution_id: Uuid,
     pub client_order_id: Uuid,
     pub symbol: String,
+    pub side: OrderSide,
     pub price: Decimal,
     pub quantity: Decimal,
     pub fee: Decimal,
@@ -75,3 +76,4 @@ pub struct Signal {
     /// A score from 0.0 to 1.0 indicating the strategy's confidence in this signal.
     pub confidence: Decimal,
 }
+
