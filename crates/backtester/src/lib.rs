@@ -6,25 +6,34 @@ use database::DbRepository;
 use executor::{Executor, Portfolio};
 use indicatif::{ProgressBar, ProgressStyle};
 use risk::RiskManager;
+use rust_decimal::Decimal;
 use std::collections::HashMap;
 use strategies::Strategy;
 use uuid::Uuid;
 
 pub mod error;
 
+/// The main backtesting engine.
+///
+/// This struct now also handles the persistence of its own results.
 pub struct Backtester {
+    // --- Context ---
+    run_id: Uuid, // The unique ID for this specific run, used as a foreign key.
+    symbol: String,
+    interval: String,
+    // --- Components ---
     portfolio: Portfolio,
     strategy: Box<dyn Strategy>,
     risk_manager: Box<dyn RiskManager>,
     executor: Box<dyn Executor>,
     analytics_engine: AnalyticsEngine,
     db_repo: DbRepository,
-    symbol: String,
-    interval: String,
 }
 
 impl Backtester {
+    /// Constructs a new `Backtester`, now requiring a `run_id`.
     pub fn new(
+        run_id: Uuid, // <-- ADDED
         symbol: String,
         interval: String,
         portfolio: Portfolio,
@@ -35,6 +44,7 @@ impl Backtester {
         db_repo: DbRepository,
     ) -> Self {
         Self {
+            run_id, // <-- ADDED
             symbol,
             interval,
             portfolio,
@@ -46,13 +56,15 @@ impl Backtester {
         }
     }
 
+    /// Runs the simulation and saves all results to the database upon completion.
     pub async fn run(
         &mut self,
         start_date: DateTime<Utc>,
         end_date: DateTime<Utc>,
     ) -> Result<PerformanceReport, BacktestError> {
         // 1. Load Data
-        let klines = self.db_repo
+        let klines = self
+            .db_repo
             .get_klines_by_date_range(&self.symbol, &self.interval, start_date, end_date)
             .await?;
         
@@ -63,7 +75,6 @@ impl Backtester {
         // 2. Initialize State
         let mut equity_curve = Vec::with_capacity(klines.len());
         let mut completed_trades = Vec::new();
-        // CORRECTED: We only need to store one potential open entry at a time for simple strategies.
         let mut pending_entry: Option<Execution> = None;
         
         let progress_bar = ProgressBar::new(klines.len() as u64);
@@ -73,7 +84,7 @@ impl Backtester {
                 .progress_chars("=>-"),
         );
 
-        // 3. Main Simulation Loop
+        // 3. Main Simulation Loop (Logic remains the same)
         for kline in klines.iter() {
             let position_before = self.portfolio.get_position(&self.symbol).cloned();
 
@@ -94,15 +105,10 @@ impl Backtester {
                 let execution = self.executor.execute(&order_request, kline).await?;
                 self.portfolio.update_with_execution(&execution)?;
                 
-                // --- CORRECTED TRADE MATCHING LOGIC ---
                 let position_after = self.portfolio.get_position(&self.symbol);
 
                 match (position_before, position_after) {
-                    // Case 1: Opened a new position
-                    (None, Some(_)) => {
-                        pending_entry = Some(execution);
-                    }
-                    // Case 2: Closed an existing position
+                    (None, Some(_)) => { pending_entry = Some(execution); }
                     (Some(_), None) => {
                         if let Some(entry_execution) = pending_entry.take() {
                              completed_trades.push(Trade {
@@ -113,9 +119,6 @@ impl Backtester {
                             });
                         }
                     }
-                    // Case 3: Position size changed (scaling in/out) or no change.
-                    // This simple logic doesn't handle scaling in/out, but it correctly
-                    // handles simple open/close, which fixes the "zero trades" bug.
                     _ => {}
                 }
             }
@@ -126,12 +129,10 @@ impl Backtester {
             progress_bar.inc(1);
         }
 
-        progress_bar.finish_with_message("Simulation complete.");
-
-        progress_bar.finish_with_message("Simulation complete.");
+        progress_bar.finish_with_message("Simulation complete. Analyzing and saving results...");
 
         // 4. Generate Final Report
-        let initial_capital = self.portfolio.cash; // More accurate initial capital
+        let initial_capital = self.portfolio.cash + self.portfolio.positions.values().map(|p| p.entry_price * p.quantity).sum::<Decimal>();
         let report = self.analytics_engine.calculate(
             &completed_trades,
             &equity_curve,
@@ -139,6 +140,13 @@ impl Backtester {
             &self.interval,
         )?;
         
+        // --- 5. Persist All Results to Database ---
+        self.db_repo.save_performance_report(self.run_id, &report).await?;
+        self.db_repo.save_trades(self.run_id, &completed_trades).await?;
+        self.db_repo.save_equity_curve(self.run_id, &equity_curve).await?;
+        
+        progress_bar.finish_with_message("Results saved successfully.");
+
         Ok(report)
     }
 }
