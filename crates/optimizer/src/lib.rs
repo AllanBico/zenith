@@ -12,7 +12,6 @@ use serde_json::Value as JsonValue;
 use strategies::{create_strategy, StrategyId};
 use tokio::runtime::Handle;
 use uuid::Uuid;
-use chrono::Utc;
 
 pub mod error;
 pub mod generator;

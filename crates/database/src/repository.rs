@@ -7,6 +7,7 @@ use serde_json::Value as JsonValue;
 use sqlx::postgres::PgPool;
 use sqlx::postgres::Postgres;
 use sqlx::Row;
+use serde::{Deserialize, Serialize};
 use sqlx::Transaction;
 use uuid::Uuid;
 use sqlx::FromRow;
@@ -23,6 +24,36 @@ pub struct DbBacktestRun {
     pub job_id: Uuid,
     pub parameters: JsonValue,
     pub run_status: String,
+}
+
+/// A struct that represents the result of joining `performance_reports`
+/// with `backtest_runs` to get a complete picture of a single run.
+#[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
+pub struct FullReport {
+    // Fields from backtest_runs
+    pub run_id: Uuid,
+    pub job_id: Uuid,
+    pub parameters: JsonValue,
+    
+    // Fields from performance_reports
+    pub report_id: Option<Uuid>,
+    pub total_net_profit: Option<Decimal>,
+    pub gross_profit: Option<Decimal>,
+    pub gross_loss: Option<Decimal>,
+    pub profit_factor: Option<Decimal>,
+    pub total_return_pct: Option<Decimal>,
+    pub max_drawdown: Option<Decimal>,
+    pub max_drawdown_pct: Option<Decimal>,
+    pub sharpe_ratio: Option<Decimal>,
+    pub calmar_ratio: Option<Decimal>,
+    pub total_trades: Option<i32>,
+    pub winning_trades: Option<i32>,
+    pub losing_trades: Option<i32>,
+    pub win_rate_pct: Option<Decimal>,
+    pub average_win: Option<Decimal>,
+    pub average_loss: Option<Decimal>,
+    pub payoff_ratio: Option<Decimal>,
+    pub average_holding_period: Option<String>,
 }
 impl DbRepository {
     /// Creates a new `DbRepository` with a shared database connection pool.
@@ -156,6 +187,7 @@ impl DbRepository {
     }
 
     
+    
     /// Saves a full performance report linked to a specific backtest run.
     pub async fn save_performance_report(
         &self,
@@ -232,6 +264,48 @@ impl DbRepository {
         Ok(())
     }
 
+    /// Fetches a complete set of reports for a given optimization job, joining
+    /// backtest run data (for parameters) with performance report data (for results).
+    pub async fn get_full_reports_for_job(&self, job_id: Uuid) -> Result<Vec<FullReport>, DbError> {
+        let reports = sqlx::query_as!(
+            FullReport,
+            r#"
+            SELECT
+                br.run_id as "run_id!",
+                br.job_id as "job_id!",
+                br.parameters as "parameters!",
+                pr.report_id as "report_id?",
+                pr.total_net_profit as "total_net_profit?",
+                pr.gross_profit as "gross_profit?",
+                pr.gross_loss as "gross_loss?",
+                pr.profit_factor as "profit_factor?",
+                pr.total_return_pct as "total_return_pct?",
+                pr.max_drawdown as "max_drawdown?",
+                pr.max_drawdown_pct as "max_drawdown_pct?",
+                pr.sharpe_ratio as "sharpe_ratio?",
+                pr.calmar_ratio as "calmar_ratio?",
+                pr.total_trades as "total_trades?",
+                pr.winning_trades as "winning_trades?",
+                pr.losing_trades as "losing_trades?",
+                pr.win_rate_pct as "win_rate_pct?",
+                pr.average_win as "average_win?",
+                pr.average_loss as "average_loss?",
+                pr.payoff_ratio as "payoff_ratio?",
+                pr.average_holding_period as "average_holding_period?"
+            FROM
+                performance_reports AS pr
+            JOIN
+                backtest_runs AS br ON pr.run_id = br.run_id
+            WHERE
+                br.job_id = $1
+            "#,
+            job_id
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        Ok(reports)
+    }
     /// Saves the full equity curve for a backtest run within a single transaction.
     pub async fn save_equity_curve(
         &self,

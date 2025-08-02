@@ -15,7 +15,7 @@ members = [
     "crates/optimizer",
     "crates/database",
     "crates/api-client",
-    "crates/web-server", "crates/configuration", "crates/executor",
+    "crates/web-server", "crates/configuration", "crates/executor", "crates/analyzer",
 ]
 resolver = "2"
 
@@ -24,6 +24,7 @@ resolver = "2"
 # Workspace Dependencies
 # ==============================================================================
 # The application orchestrates these crates to perform its tasks.
+analyzer = { path = "crates/analyzer" }
 analytics = { path = "crates/analytics" }
 api-client = { path = "crates/api-client" }
 backtester = { path = "crates/backtester" }
@@ -44,10 +45,11 @@ strategies = { path = "crates/strategies" }
 # ==============================================================================
 # The primary async runtime for the application.
 tokio = { version = "1", features = ["full"] }
-
+comfy-table = "7.1"
 # For building a powerful and ergonomic command-line interface.
 # The "derive" feature allows us to define our CLI with simple structs.
 clap = { version = "4.5", features = ["derive"] }
+uuid = { version = "1.8.0", features = ["v4", "serde"] }
 
 # For loading the DATABASE_URL and other secrets from the .env file at startup.
 dotenvy = "0.15"

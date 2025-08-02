@@ -1,8 +1,9 @@
 use anyhow::Result;
 use api_client::{ApiClient, BinanceClient};
 use backtester::Backtester;
-use chrono::{DateTime, Datelike, NaiveDate, TimeDelta, Utc};
+use chrono::{DateTime, NaiveDate, Utc};
 use clap::{Parser, Subcommand};
+use comfy_table::{presets::UTF8_FULL, Cell, ContentArrangement, Table}; // For table output
 use configuration::{load_config, load_optimizer_config};
 use database::{connect, run_migrations, DbRepository};
 use executor::{Portfolio, SimulatedExecutor};
@@ -12,7 +13,8 @@ use optimizer::Optimizer;
 use risk::SimpleRiskManager;
 use strategies::create_strategy;
 use std::path::PathBuf;
-use std::time::Duration;
+use uuid::Uuid; // For parsing Job ID
+use analyzer::Analyzer; // Import the Analyzer type
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -26,7 +28,8 @@ async fn main() -> Result<()> {
     match cli.command {
         Commands::Backfill(args) => handle_backfill(args, db_pool).await?,
         Commands::SingleRun(args) => handle_single_run(args, db_pool).await?,
-        Commands::Optimize(args) => handle_optimize(args, db_pool).await?, // New command wiring
+        Commands::Optimize(args) => handle_optimize(args, db_pool).await?,
+        Commands::Analyze(args) => handle_analyze(args, db_pool).await?, // New command
     }
 
     Ok(())
@@ -45,14 +48,14 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Download historical kline data.
     Backfill(BackfillArgs),
-    /// Run a single backtest using parameters from config.toml.
     SingleRun(SingleRunArgs),
-    /// Run a full optimization job from a config file.
     Optimize(OptimizeArgs),
+    /// Analyze the results of a completed optimization job.
+    Analyze(AnalyzeArgs),
 }
 
+// ... (BackfillArgs and SingleRunArgs are unchanged)
 #[derive(Parser)]
 struct BackfillArgs {
     #[arg(long)]
@@ -62,7 +65,7 @@ struct BackfillArgs {
     #[arg(long)]
     from: NaiveDate,
     #[arg(long)]
-to: NaiveDate,
+    to: NaiveDate,
 }
 
 #[derive(Parser)]
@@ -75,29 +78,94 @@ struct SingleRunArgs {
 
 #[derive(Parser)]
 struct OptimizeArgs {
-    /// Path to the optimizer configuration file.
     #[arg(long, short, default_value = "optimizer.toml")]
     config: PathBuf,
 }
+
+#[derive(Parser)]
+struct AnalyzeArgs {
+    /// The Job ID of the optimization run to analyze.
+    job_id: Uuid,
+    /// Optional: Path to the optimizer config file used for the job (to get analysis rules).
+    #[arg(long, short, default_value = "optimizer.toml")]
+    config: PathBuf,
+}
+
 
 // ==============================================================================
 // Command Handlers
 // ==============================================================================
 
+async fn handle_analyze(args: AnalyzeArgs, db_pool: sqlx::PgPool) -> Result<()> {
+    println!("---===[ Analyzing Optimization Job: {} ]===---", args.job_id);
+
+    // 1. Load config and instantiate components
+    let optimizer_config = load_optimizer_config(&args.config)?;
+    let db_repo = DbRepository::new(db_pool);
+    let analyzer = Analyzer::new(optimizer_config.analysis);
+
+    // 2. Run the analysis
+    let ranked_reports = analyzer.run(&db_repo, args.job_id).await?;
+
+    if ranked_reports.is_empty() {
+        println!("No reports found for this job, or all were filtered out.");
+        return Ok(());
+    }
+
+    // 3. Display the results in a formatted table
+    let mut table = Table::new();
+    table
+        .load_preset(UTF8_FULL)
+        .set_content_arrangement(ContentArrangement::Dynamic)
+        .set_header(vec![
+            "Rank", "Score", "Net Profit", "Drawdown %", "Calmar", "Profit Factor", "Trades", "Params",
+        ]);
+
+    for (i, ranked) in ranked_reports.iter().take(20).enumerate() { // Show top 20
+        table.add_row(vec![
+            Cell::new(i + 1),
+            Cell::new(format!("{:.4}", ranked.score)),
+            Cell::new(match ranked.report.total_net_profit {
+                Some(profit) => format!("{:.2}", profit),
+                None => "N/A".to_string(),
+            }),
+            Cell::new(match ranked.report.max_drawdown_pct {
+                Some(drawdown) => format!("{:.2}%", drawdown),
+                None => "N/A".to_string(),
+            }),
+            Cell::new(match ranked.report.calmar_ratio {
+                Some(ratio) => format!("{:.2}", ratio),
+                None => "N/A".to_string(),
+            }),
+            Cell::new(match ranked.report.profit_factor {
+                Some(factor) => format!("{:.2}", factor),
+                None => "N/A".to_string(),
+            }),
+            Cell::new(match ranked.report.total_trades {
+                Some(trades) => trades.to_string(),
+                None => "N/A".to_string(),
+            }),
+            Cell::new(ranked.report.parameters.to_string()),
+        ]);
+    }
+
+    println!("{table}");
+    Ok(())
+}
+
+
+// ... (handle_optimize, handle_single_run, handle_backfill, generate_monthly_ranges are unchanged)
 async fn handle_optimize(args: OptimizeArgs, db_pool: sqlx::PgPool) -> Result<()> {
     println!("---===[ Starting Optimization Job ]===---");
 
-    // 1. Load both configurations
     println!("Loading base configuration from config.toml...");
     let base_config = load_config(Some("config.toml"))?;
     
     println!("Loading optimization job from: {:?}", &args.config);
     let optimizer_config = load_optimizer_config(&args.config)?;
 
-    // 2. Instantiate dependencies
     let db_repo = DbRepository::new(db_pool);
 
-    // 3. Create and run the Optimizer
     let optimizer = Optimizer::new(optimizer_config, base_config, db_repo);
     
     optimizer.run().await?;
@@ -106,46 +174,26 @@ async fn handle_optimize(args: OptimizeArgs, db_pool: sqlx::PgPool) -> Result<()
     Ok(())
 }
 
-
 async fn handle_single_run(args: SingleRunArgs, db_pool: sqlx::PgPool) -> Result<()> {
     let config = load_config(Some("config.toml"))?;
     println!("Configuration loaded. Running default single backtest...");
 
-    // Use command line arguments or default values for dates
-    let start_date = args.from.unwrap_or_else(|| {
-        // Default to one month ago if no start date provided
-        let now = chrono::Utc::now().naive_utc().date();
-        now - chrono::TimeDelta::days(30)
-    });
-    
-    let end_date = args.to.unwrap_or_else(|| {
-        // Default to now if no end date provided
-        chrono::Utc::now().naive_utc().date()
-    });
-    
-    // Use default values for symbol and interval
-    let symbol = "BTCUSDT".to_string();
-    let interval = "15m".to_string();
+    let backtest_config = config.backtest.clone();
+    let start_date = args.from.unwrap_or(backtest_config.start_date);
+    let end_date = args.to.unwrap_or(backtest_config.end_date);
+    let symbol = backtest_config.symbol.clone();
+    let interval = backtest_config.interval.clone();
 
     println!("Period: {} to {}", start_date, end_date);
     println!("Symbol: {}, Interval: {}", symbol, interval);
 
     let db_repo = DbRepository::new(db_pool);
     let analytics_engine = analytics::AnalyticsEngine::new();
-    
-    // Use a default initial capital since it's not in the config
-    let initial_capital = rust_decimal_macros::dec!(1000.0);
-    let portfolio = Portfolio::new(initial_capital);
-    
+    let portfolio = Portfolio::new(backtest_config.initial_capital);
     let executor = Box::new(SimulatedExecutor::new(config.simulation.clone()));
     let risk_manager = Box::new(SimpleRiskManager::new(config.risk_management.clone())?);
     
-    // Create the strategy using the correct symbol from our local variable
-    let strategy = create_strategy(
-        strategies::StrategyId::MACrossover, 
-        &config,
-        &symbol
-    )?;
+    let strategy = create_strategy(strategies::StrategyId::MACrossover, &config, "default_strategy")?;
     println!("Strategy: MACrossover");
 
     let mut backtester = Backtester::new(
@@ -177,7 +225,7 @@ async fn handle_backfill(args: BackfillArgs, db_pool: sqlx::PgPool) -> Result<()
     );
 
     let db_repo = DbRepository::new(db_pool);
-    let api_client = BinanceClient::new();
+    let _api_client = BinanceClient::new();
 
     let date_ranges = generate_monthly_ranges(args.from, args.to);
     
@@ -226,35 +274,38 @@ async fn handle_backfill(args: BackfillArgs, db_pool: sqlx::PgPool) -> Result<()
 }
 
 fn generate_monthly_ranges(
-    mut from: NaiveDate,
+    from: NaiveDate,
     to: NaiveDate,
 ) -> Vec<(DateTime<Utc>, DateTime<Utc>)> {
-    let mut ranges = Vec::new();
+    use chrono::Datelike;
     
-    while from <= to {
-        // Get the first day of the current month
-        let first_day = from.with_day(1).unwrap();
+    let mut ranges = Vec::new();
+    let mut current = from;
+    
+    while current <= to {
+        // Get the last day of the current month
+        let year = current.year();
+        let month = current.month();
         
-        // Calculate the first day of the next month
-        let next_month = if first_day.month() == 12 {
-            NaiveDate::from_ymd_opt(first_day.year() + 1, 1, 1).unwrap()
+        // Calculate the first day of next month, then subtract 1 day to get end of current month
+        let next_month = if month == 12 {
+            NaiveDate::from_ymd_opt(year + 1, 1, 1).unwrap()
         } else {
-            NaiveDate::from_ymd_opt(first_day.year(), first_day.month() + 1, 1).unwrap()
+            NaiveDate::from_ymd_opt(year, month + 1, 1).unwrap()
         };
         
-        // The last day of the current month is the day before the first day of the next month
         let end_of_month = next_month.pred_opt().unwrap();
-        
-        // Use the provided 'to' date if it's earlier than the end of the current month
         let end_date = std::cmp::min(end_of_month, to);
         
-        // Add the range to the result
+        // Add the range for this month
         ranges.push((
-            from.and_hms_opt(0, 0, 0).unwrap().and_local_timezone(Utc).unwrap(),
+            current.and_hms_opt(0, 0, 0).unwrap().and_local_timezone(Utc).unwrap(),
             end_date.and_hms_opt(23, 59, 59).unwrap().and_local_timezone(Utc).unwrap(),
         ));
         
-        from = end_date + chrono::Duration::days(1);
+        // Move to the first day of the next month
+        current = next_month;
     }
+    
     ranges
 }

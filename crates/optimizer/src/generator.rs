@@ -1,7 +1,6 @@
 use crate::error::OptimizerError;
 use configuration::optimizer_config::{OptimizerConfig, ParameterRange};
 use itertools::Itertools;
-use rust_decimal::Decimal;
 use serde_json::{json, Map, Value};
 use std::collections::HashMap;
 

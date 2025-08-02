@@ -1,28 +1,44 @@
 # ==============================================================================
 # Zenith Optimizer Job Configuration
-#
-# This file defines a single optimization experiment.
 # ==============================================================================
 
 # --- Base Settings ---
 # Defines the core context for the optimization job.
 [base_config]
-strategy_id = "MACrossover" # Must match a StrategyId enum variant
+strategy_id = "MACrossover"
 symbol = "BTCUSDT"
-interval = "1h"
+interval = "15m"
 
 # --- Parameter Space ---
-# Defines the ranges of parameters to be tested. The optimizer will generate
-# every possible combination of these parameters.
+# Defines the ranges of parameters to be tested.
 [parameter_space]
+ma_fast_period = [5, 8, 10, 12, 15]
+ma_slow_period = { start = 20, end = 60, step = 5 }
 
-# Use a discrete list of values for the fast MA period.
-ma_fast_period = [5, 8, 10, 12]
+# ==============================================================================
+# Analysis & Ranking Configuration
+#
+# This section defines how the results of the optimization will be filtered
+# and scored to find the "best" parameter set. This section is optional.
+# If omitted, sensible defaults will be used.
+# ==============================================================================
+[analysis]
 
-# Use a linear range for the slow MA period.
-# This will generate: 20, 25, 30, 35, 40, 45, 50
-ma_slow = { start = 20, end = 50, step = 5 }
+# --- Filters ---
+# These are hard rules that immediately disqualify a backtest run.
+[analysis.filters]
+# A run must have at least this many trades to be considered statistically significant.
+min_total_trades = 2
+# A run will be discarded if its maximum drawdown was worse (larger) than this percentage.
+max_drawdown_pct = 70.0
 
-# The trend filter is not part of this optimization and will be taken
-# from the default `config.toml`. If we wanted to optimize it, we would add:
-# trend_filter_period = { start = 150, end = 250, step = 50 }
+# --- Scoring Weights ---
+# These weights determine the importance of each metric in the final "desirability" score.
+# The weights should ideally sum to 1.0.
+[analysis.scoring_weights]
+# How much do we value raw profitability? (Profit Factor)
+weight_profit_factor = 0.3
+# How much do we value risk-adjusted return? (Calmar Ratio)
+weight_calmar_ratio = 0.5
+# How much do we value the magnitude of wins vs losses? (Payoff Ratio)
+weight_avg_win_loss_ratio = 0.2
