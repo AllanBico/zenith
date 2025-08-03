@@ -11,7 +11,7 @@
 # Parameters for the `single-run` command.
 # ------------------------------------------------------------------------------
 [backtest]
-symbol = "BTCUSDT"
+symbol = "ETHUSDT"
 interval = "15m"
 initial_capital = 1000.0
 start_date = "2025-01-01"

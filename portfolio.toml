@@ -1,0 +1,27 @@
+# ==============================================================================
+# Zenith Portfolio Definition
+#
+# This file defines a collection of bots to be run together.
+# All parameters are embedded directly in this file.
+# ==============================================================================
+
+# --- Bot 1: A trend-following strategy on Bitcoin ---
+[[bot]]
+symbol = "BTCUSDT"
+strategy_id = "MACrossover"
+
+[bot.params]
+ma_fast_period = 20
+ma_slow_period = 30
+trend_filter_period = 50
+
+
+# --- Bot 2: A mean-reversion strategy on Ethereum ---
+[[bot]]
+symbol = "ETHUSDT"
+strategy_id = "MACrossover"
+
+[bot.params]
+ma_fast_period = 20
+ma_slow_period = 30
+trend_filter_period = 50

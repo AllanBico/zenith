@@ -1,6 +1,8 @@
 use rust_decimal::Decimal;
 use serde::Deserialize;
 use chrono::NaiveDate;
+use serde_json::Value as JsonValue;
+use core_types::enums::StrategyId;
 /// The root configuration structure for the entire application.
 #[derive(Debug, Clone, Deserialize)]
 pub struct Config {
@@ -96,4 +98,19 @@ pub struct FundingRateArbParams {
     pub target_rate_threshold: Decimal,
     /// A safety threshold. If spot-perp basis expands beyond this, close the position.
     pub basis_safety_threshold: Decimal,
+}
+/// Defines a portfolio, which is a collection of individual trading bots.
+#[derive(Debug, Clone, Deserialize)]
+pub struct PortfolioConfig {
+    #[serde(rename = "bot")]
+    pub bots: Vec<PortfolioBotConfig>,
+}
+
+/// Defines a single trading bot with its parameters embedded directly.
+#[derive(Debug, Clone, Deserialize)]
+pub struct PortfolioBotConfig {
+    pub symbol: String,
+    pub strategy_id: StrategyId,
+    /// The specific parameters for this bot, stored as a flexible JSON/TOML object.
+    pub params: JsonValue,
 }

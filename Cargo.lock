@@ -1891,6 +1891,28 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f84267b20a16ea918e43c6a88433c2d54fa145c92a811b5b047ccbe153674483"
 
 [[package]]
+name = "portfolio-backtester"
+version = "0.1.0"
+dependencies = [
+ "analytics",
+ "chrono",
+ "configuration",
+ "core-types",
+ "database",
+ "events",
+ "executor",
+ "futures",
+ "indicatif",
+ "risk",
+ "rust_decimal",
+ "serde_json",
+ "strategies",
+ "thiserror 2.0.12",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
 name = "postgres-protocol"
 version = "0.6.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3808,6 +3830,7 @@ dependencies = [
  "futures",
  "indicatif",
  "optimizer",
+ "portfolio-backtester",
  "risk",
  "rust_decimal",
  "rust_decimal_macros",

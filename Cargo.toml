@@ -15,7 +15,7 @@ members = [
     "crates/optimizer",
     "crates/database",
     "crates/api-client",
-    "crates/web-server", "crates/configuration", "crates/executor", "crates/analyzer", "crates/wfo",
+    "crates/web-server", "crates/configuration", "crates/executor", "crates/analyzer", "crates/wfo", "crates/portfolio-backtester",
 ]
 resolver = "2"
 
@@ -37,6 +37,7 @@ optimizer = { path = "crates/optimizer" }
 core-types = { path = "crates/core-types" }
 database = { path = "crates/database" }
 executor = { path = "crates/executor" }
+portfolio-backtester = { path = "crates/portfolio-backtester" }
 risk = { path = "crates/risk" }
 strategies = { path = "crates/strategies" }
 wfo = { path = "crates/wfo" }

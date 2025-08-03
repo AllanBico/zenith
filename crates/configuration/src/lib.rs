@@ -11,7 +11,7 @@ pub mod settings;
 
 // Re-export the core types to provide a clean public API.
 pub use settings::{
-    Config, FundingRateArbParams, MACrossoverParams, ProbReversionParams, RiskManagement,
+    Config, FundingRateArbParams, MACrossoverParams, ProbReversionParams, RiskManagement,PortfolioBotConfig, PortfolioConfig,
     Simulation, Strategies, SuperTrendParams,
 };
 
@@ -92,4 +92,12 @@ pub fn load_optimizer_config(path: &Path) -> Result<OptimizerConfig, ConfigError
         .add_source(config::File::from(path))
         .build()?;
     builder.try_deserialize::<OptimizerConfig>().map_err(Into::into)
+}
+
+/// Loads the portfolio configuration from a specific TOML file path.
+pub fn load_portfolio_config(path: &Path) -> Result<PortfolioConfig, ConfigError> {
+    let builder = config::Config::builder()
+        .add_source(config::File::from(path))
+        .build()?;
+    builder.try_deserialize::<PortfolioConfig>().map_err(Into::into)
 }
