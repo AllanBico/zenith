@@ -89,6 +89,7 @@ impl Strategy for MACrossover {
                         order_type: OrderType::Market,
                         quantity: Decimal::ZERO, // Let the risk manager determine the size
                         price: None,
+                        position_side: None, // Will be set by engine
                     },
                 });
             } else if is_bearish_cross && is_downtrend {
@@ -103,6 +104,7 @@ impl Strategy for MACrossover {
                         order_type: OrderType::Market,
                         quantity: Decimal::ZERO, // Let the risk manager determine the size
                         price: None,
+                        position_side: None, // Will be set by engine
                     },
                 });
             }

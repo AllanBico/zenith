@@ -38,3 +38,6 @@ uuid = { version = "1.8", features = ["v4"] }
 
 # For date and time handling.
 chrono = { version = "0.4", features = ["serde"] }
+
+# For high-precision decimal arithmetic.
+rust_decimal = "1.32"

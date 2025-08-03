@@ -4,12 +4,29 @@ use configuration::{Config, LiveConfig};
 use database::DbRepository;
 use executor::Portfolio;
 use risk::{SimpleRiskManager, RiskManager};
+use rust_decimal::Decimal;
 use std::collections::HashMap;
 use std::sync::Arc;
 use strategies::Strategy;
 use tokio::sync::Mutex;
 use uuid::Uuid;
 use chrono::Utc;
+
+/// Rounds quantity to the appropriate precision for the given symbol.
+/// This is a simple implementation - in production, you'd fetch this from exchange info.
+fn round_quantity_to_precision(symbol: &str, quantity: Decimal) -> Decimal {
+    // Simple precision mapping for common symbols
+    // In a real implementation, this would come from exchange info API
+    let precision = match symbol {
+        "BTCUSDT" => 3,  // BTC precision is 0.001
+        "ETHUSDT" => 3,  // ETH precision is 0.001
+        _ => 2,          // Default to 2 decimal places
+    };
+    
+    // Round to the specified precision
+    let scale = Decimal::from(10_i64.pow(precision as u32));
+    (quantity * scale).round() / scale
+}
 
 /// A wrapper for Kline data that includes the symbol information.
 /// This is needed because the Kline struct doesn't contain symbol information.
@@ -119,27 +136,34 @@ impl Engine {
 
         // Clear any existing positions and reconstruct from the exchange's data.
         portfolio.positions.clear();
+        let mut open_positions_count = 0;
+        let total_positions = positions.len();
         for pos in positions {
-            // We only care about positions that are actually open.
-            if pos.position_amt.is_sign_positive() || pos.position_amt.is_sign_negative() {
-                 let side = if pos.position_amt.is_sign_positive() {
+            // We only care about positions that are actually open (non-zero amount).
+            if pos.position_amt != Decimal::ZERO {
+                open_positions_count += 1;
+                let side = if pos.position_amt.is_sign_positive() {
                     core_types::OrderSide::Buy
                 } else {
                     core_types::OrderSide::Sell
                 };
                 
+                let symbol = pos.symbol.clone();
                 let position = core_types::Position {
                     position_id: Uuid::new_v4(),
-                    symbol: pos.symbol.clone(),
+                    symbol: symbol.clone(),
                     side,
                     quantity: pos.position_amt.abs(),
                     entry_price: pos.entry_price,
                     unrealized_pnl: pos.un_realized_profit,
                     last_updated: Utc::now(),
                 };
-                portfolio.positions.insert(pos.symbol, position);
+                portfolio.positions.insert(symbol.clone(), position);
+                println!("[DEBUG] Added position: {} {:?} {:.4} @ {:.2}", 
+                    symbol, side, pos.position_amt.abs(), pos.entry_price);
             }
         }
+        println!("[DEBUG] Total API positions: {}, Actual open positions: {}", total_positions, open_positions_count);
 
         Ok(())
     }
@@ -263,7 +287,14 @@ impl Engine {
                 // Drop the lock as soon as we're done reading the state.
                 drop(portfolio_guard);
 
-                let order_request = self.risk_manager.evaluate_signal(&signal, &portfolio_state, kline_with_symbol.kline.close)?;
+                let mut order_request = self.risk_manager.evaluate_signal(&signal, &portfolio_state, kline_with_symbol.kline.close)?;
+                
+                // Fix precision issue by rounding to appropriate decimal places
+                order_request.quantity = round_quantity_to_precision(&order_request.symbol, order_request.quantity);
+                
+                // Add position side for hedge mode
+                order_request.position_side = Some(core_types::enums::PositionSide::from_order_side(order_request.side));
+                
                 println!("[RISK] Assessment passed. Final Order: {:?} {} @ Market", order_request.quantity, order_request.symbol);
 
                 // 4. Execution: Place the final, risk-managed order.

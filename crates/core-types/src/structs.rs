@@ -1,4 +1,4 @@
-use crate::enums::{OrderSide, OrderType};
+use crate::enums::{OrderSide, OrderType, PositionSide};
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
@@ -30,6 +30,8 @@ pub struct OrderRequest {
     pub quantity: Decimal,
     /// For LIMIT orders, this is the price. For MARKET orders, this is None.
     pub price: Option<Decimal>,
+    /// Position side for hedge mode. None for one-way mode.
+    pub position_side: Option<PositionSide>,
 }
 
 /// Represents a confirmed trade execution from the exchange.

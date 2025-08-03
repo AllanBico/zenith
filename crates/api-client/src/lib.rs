@@ -16,7 +16,7 @@ pub mod error;
 pub mod responses;
 pub mod live_connector;
 // --- Public API ---
-pub use responses::{BalanceResponse, OrderResponse, PositionResponse, ApiErrorResponse};
+pub use responses::{BalanceResponse, OrderResponse, PositionResponse, ApiErrorResponse, ExchangeInfoResponse, PositionModeResponse};
 pub use live_connector::LiveConnector;
 /// The generic, abstract interface for a trading exchange API client.
 /// This trait is the contract that the live engine will use, allowing the
@@ -43,6 +43,15 @@ pub trait ApiClient: Send + Sync {
 
     /// Fetches all current open positions. (Authenticated)
     async fn get_open_positions(&self) -> Result<Vec<PositionResponse>, ApiError>;
+
+    /// Fetches exchange information including symbol precision. (Public)
+    async fn get_exchange_info(&self) -> Result<ExchangeInfoResponse, ApiError>;
+
+    /// Gets the current position mode (one-way vs hedge). (Authenticated)
+    async fn get_position_mode(&self) -> Result<bool, ApiError>;
+
+    /// Sets the position mode (one-way vs hedge). (Authenticated)
+    async fn set_position_mode(&self, dual_side: bool) -> Result<(), ApiError>;
 }
 
 /// A concrete implementation of the `ApiClient` for the Binance exchange.
@@ -219,6 +228,11 @@ impl ApiClient for BinanceClient {
         params.insert("quantity", order.quantity.to_string());
         params.insert("newClientOrderId", order.client_order_id.to_string());
         
+        // Add position side if specified (for hedge mode)
+        if let Some(position_side) = order.position_side {
+            params.insert("positionSide", format!("{:?}", position_side).to_uppercase());
+        }
+        
         self._post_signed("/fapi/v1/order", &mut params).await
     }
 
@@ -230,5 +244,25 @@ impl ApiClient for BinanceClient {
     async fn get_open_positions(&self) -> Result<Vec<PositionResponse>, ApiError> {
         let mut params = BTreeMap::new();
         self._get_signed("/fapi/v2/positionRisk", &mut params).await
+    }
+
+    async fn get_exchange_info(&self) -> Result<ExchangeInfoResponse, ApiError> {
+        let url = format!("{}/fapi/v1/exchangeInfo", self.base_url);
+        let response = self.client.get(&url).send().await?;
+        let text = response.text().await?;
+        serde_json::from_str(&text).map_err(|e| ApiError::Deserialization(e.to_string()))
+    }
+
+    async fn get_position_mode(&self) -> Result<bool, ApiError> {
+        let mut params = BTreeMap::new();
+        let response: PositionModeResponse = self._get_signed("/fapi/v1/positionSide/dual", &mut params).await?;
+        Ok(response.dual_side_position)
+    }
+
+    async fn set_position_mode(&self, dual_side: bool) -> Result<(), ApiError> {
+        let mut params = BTreeMap::new();
+        params.insert("dualSidePosition", dual_side.to_string());
+        self._post_signed::<serde_json::Value>("/fapi/v1/positionSide/dual", &mut params).await?;
+        Ok(())
     }
 }

@@ -60,3 +60,34 @@ pub struct ApiErrorResponse {
     pub code: i16,
     pub msg: String,
 }
+
+/// Response from the exchange info endpoint.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExchangeInfoResponse {
+    pub symbols: Vec<SymbolInfo>,
+}
+
+/// Information about a single trading symbol.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SymbolInfo {
+    pub symbol: String,
+    pub filters: Vec<Filter>,
+}
+
+/// Filter information for a symbol (e.g., precision requirements).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Filter {
+    pub filter_type: String,
+    pub step_size: Option<String>,
+    pub tick_size: Option<String>,
+}
+
+/// Response from the position mode endpoint.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PositionModeResponse {
+    pub dual_side_position: bool,
+}

@@ -111,6 +111,7 @@ impl Strategy for ProbReversion {
                         order_type: OrderType::Market,
                         quantity: dec!(1.0),
                         price: None,
+                        position_side: None, // Will be set by engine
                     },
                 });
             } else if is_overbought {
@@ -126,6 +127,7 @@ impl Strategy for ProbReversion {
                         order_type: OrderType::Market,
                         quantity: dec!(1.0),
                         price: None,
+                        position_side: None, // Will be set by engine
                     },
                 });
             }

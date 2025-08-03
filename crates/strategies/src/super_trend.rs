@@ -119,6 +119,7 @@ impl Strategy for SuperTrend {
                         order_type: OrderType::Market,
                         quantity: dec!(1.0),
                         price: None,
+                        position_side: None, // Will be set by engine
                     },
                 });
             } else if is_bearish_flip && is_trend_strong {
@@ -133,6 +134,7 @@ impl Strategy for SuperTrend {
                         order_type: OrderType::Market,
                         quantity: dec!(1.0),
                         price: None,
+                        position_side: None, // Will be set by engine
                     },
                 });
             }

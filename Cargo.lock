@@ -766,6 +766,7 @@ dependencies = [
  "events",
  "executor",
  "risk",
+ "rust_decimal",
  "serde_json",
  "strategies",
  "thiserror 1.0.69",
