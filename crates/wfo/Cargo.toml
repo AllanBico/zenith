@@ -1,0 +1,39 @@
+[package]
+name = "wfo"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+# ==============================================================================
+# Workspace Dependencies
+# ==============================================================================
+# The WFO engine is a master orchestrator and needs access to the full
+# research stack to perform its duties.
+optimizer = { path = "../optimizer" }
+analyzer = { path = "../analyzer" }
+backtester = { path = "../backtester" }
+database = { path = "../database" }
+configuration = { path = "../configuration" }
+core-types = { path = "../core-types" }
+
+# These are needed to construct the Backtester instance for the OOS run.
+strategies = { path = "../strategies" }
+risk = { path = "../risk" }
+executor = { path = "../executor" }
+analytics = { path = "../analytics" }
+
+
+# ==============================================================================
+# External Dependencies
+# ==============================================================================
+# For creating the crate's specific error types.
+thiserror = "2.0"
+
+# The async runtime, as the main `run` method will be async.
+tokio = { version = "1", features = ["full"] }
+
+# For generating unique IDs for the WFO job and its runs.
+uuid = { version = "1.8", features = ["v4"] }
+
+# For performing the date slicing logic (e.g., adding weeks to a date).
+chrono = "0.4"

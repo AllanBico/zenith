@@ -3377,6 +3377,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "wfo"
+version = "0.1.0"
+dependencies = [
+ "analytics",
+ "analyzer",
+ "backtester",
+ "chrono",
+ "configuration",
+ "core-types",
+ "database",
+ "executor",
+ "optimizer",
+ "risk",
+ "strategies",
+ "thiserror 2.0.12",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
 name = "whoami"
 version = "1.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3796,6 +3816,7 @@ dependencies = [
  "strategies",
  "tokio",
  "uuid",
+ "wfo",
 ]
 
 [[package]]

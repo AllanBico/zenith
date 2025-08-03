@@ -2,7 +2,6 @@ use anyhow::Result;
 use api_client::{ApiClient, BinanceClient};
 use backtester::Backtester;
 use chrono::{DateTime, NaiveDate, Utc, Datelike, Duration};
-use std::ops::Add;
 use clap::{Parser, Subcommand};
 use comfy_table::{presets::UTF8_FULL, Cell, ContentArrangement, Table};
 use configuration::{load_config, load_optimizer_config};
@@ -14,9 +13,12 @@ use optimizer::Optimizer;
 use risk::SimpleRiskManager;
 use serde_json::json;
 use strategies::create_strategy;
+
+use std::ops::Add;
 use std::path::PathBuf;
 use uuid::Uuid;
 use analyzer::Analyzer;
+use wfo::WfoEngine; // Import the WFO engine
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -32,12 +34,16 @@ async fn main() -> Result<()> {
         Commands::SingleRun(args) => handle_single_run(args, db_pool).await?,
         Commands::Optimize(args) => handle_optimize(args, db_pool).await?,
         Commands::Analyze(args) => handle_analyze(args, db_pool).await?,
+        Commands::Wfo(args) => handle_wfo(args, db_pool).await?, // New command wiring
     }
 
     Ok(())
 }
 
-// ... (CLI struct definitions are unchanged) ...
+// ==============================================================================
+// CLI Structure
+// ==============================================================================
+
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
 struct Cli {
@@ -51,8 +57,11 @@ enum Commands {
     SingleRun(SingleRunArgs),
     Optimize(OptimizeArgs),
     Analyze(AnalyzeArgs),
+    /// Run a full Walk-Forward Optimization from a config file.
+    Wfo(WfoArgs),
 }
 
+// ... (Args for other commands are unchanged) ...
 #[derive(Parser)]
 struct BackfillArgs {
     #[arg(long)]
@@ -86,97 +95,54 @@ struct AnalyzeArgs {
     config: PathBuf,
 }
 
+#[derive(Parser)]
+struct WfoArgs {
+    /// Optional start date to override config default (YYYY-MM-DD).
+    #[arg(long)]
+    from: Option<NaiveDate>,
+    /// Optional end date to override config default (YYYY-MM-DD).
+    #[arg(long)]
+    to: Option<NaiveDate>,
+    /// Path to the optimizer configuration file that contains the WFO settings.
+    #[arg(long, short, default_value = "optimizer.toml")]
+    config: PathBuf,
+}
+
 
 // ==============================================================================
 // Command Handlers
 // ==============================================================================
 
-/// The handler for the `single-run` command, now updated to persist its results.
-async fn handle_single_run(args: SingleRunArgs, db_pool: sqlx::PgPool) -> Result<()> {
-    let config = load_config(None)?;
+async fn handle_wfo(args: WfoArgs, db_pool: sqlx::PgPool) -> Result<()> {
+    println!("---===[ Starting Walk-Forward Optimization Job ]===---");
+
+    // 1. Load configurations
+    let base_config = load_config(None)?;
+    let optimizer_config = load_optimizer_config(&args.config)?;
+
+    // 2. Check if WFO is enabled in the config
+    if optimizer_config.wfo.is_none() {
+        anyhow::bail!("The `[wfo]` section is missing from the optimizer config file. Cannot run a WFO job.");
+    }
+
+    // 3. Determine date range (CLI flags override config defaults)
+    let start_date = args.from.unwrap_or(base_config.backtest.start_date);
+    let end_date = args.to.unwrap_or(base_config.backtest.end_date);
+    
+    // 4. Instantiate components and run the engine
     let db_repo = DbRepository::new(db_pool);
-
-    println!("---===[ Starting Single Backtest Run ]===---");
-
-    // 1. Create database records for this run
-    let job_id = Uuid::new_v4(); // Each single run gets its own "job" for now
-    let run_id = Uuid::new_v4();
-    let strategy_id = strategies::StrategyId::MACrossover; // Hardcoded for now
-
-    // Create a JSON object of the parameters being used from the config file
-    let params = json!({
-        "ma_fast_period": config.strategies.ma_crossover.ma_fast_period,
-        "ma_slow_period": config.strategies.ma_crossover.ma_slow_period,
-        "trend_filter_period": config.strategies.ma_crossover.trend_filter_period,
-    });
+    let wfo_engine = WfoEngine::new(optimizer_config, base_config, db_repo);
     
-    // Save a placeholder "job" for this single run
-    db_repo.save_optimization_job(
-        job_id,
-        &format!("{:?}", strategy_id),
-        &config.backtest.symbol,
-        "Single Run",
-    ).await?;
-    
-    // Save the "Pending" run record
-    db_repo.save_backtest_run(run_id, job_id, &params, "Pending").await?;
-    println!("Created database record for Run ID: {}", run_id);
-
-    // 2. Set up parameters
-    let backtest_config = config.backtest.clone();
-    let start_date = args.from.unwrap_or(backtest_config.start_date);
-    let end_date = args.to.unwrap_or(backtest_config.end_date);
-    let symbol = backtest_config.symbol.clone();
-    let interval = backtest_config.interval.clone();
-
-    println!("Period: {} to {}", start_date, end_date);
-    println!("Symbol: {}, Interval: {}", symbol, interval);
-
-    // 3. Instantiate components
-    let analytics_engine = analytics::AnalyticsEngine::new();
-    let portfolio = Portfolio::new(backtest_config.initial_capital);
-    let executor = Box::new(SimulatedExecutor::new(config.simulation.clone()));
-    let risk_manager = Box::new(SimpleRiskManager::new(config.risk_management.clone())?);
-    let strategy = create_strategy(strategy_id, &config, &config.backtest.symbol)?;
-    println!("Strategy: {:?}", strategy_id);
-
-    // 4. Create and run the backtester, passing in the run_id
-    let mut backtester = Backtester::new(
-        run_id, // <-- PASS THE RUN ID
-        symbol,
-        interval,
-        portfolio,
-        strategy,
-        risk_manager,
-        executor,
-        analytics_engine,
-        db_repo.clone(), // Clone the repo for the backtester
-    );
-    
-    let report_result = backtester.run(
+    wfo_engine.run(
         start_date.and_hms_opt(0,0,0).unwrap().and_local_timezone(Utc).unwrap(),
         end_date.and_hms_opt(23,59,59).unwrap().and_local_timezone(Utc).unwrap()
-    ).await;
-
-    // 5. Update status and print report
-    match report_result {
-        Ok(report) => {
-            db_repo.update_run_status(run_id, "Completed").await?;
-            println!("\n---===[ Backtest Report (Run ID: {}) ]===---", run_id);
-            println!("{:#?}", report);
-        }
-        Err(e) => {
-            db_repo.update_run_status(run_id, "Failed").await?;
-            eprintln!("\n---===[ Backtest Failed (Run ID: {}) ]===---", run_id);
-            eprintln!("Error: {:?}", e);
-        }
-    }
+    ).await?;
 
     Ok(())
 }
 
 
-// ... (handle_analyze, handle_optimize, handle_backfill, and generate_monthly_ranges are unchanged)
+// ... (handle_analyze, handle_optimize, handle_single_run, handle_backfill are unchanged) ...
 async fn handle_analyze(args: AnalyzeArgs, db_pool: sqlx::PgPool) -> Result<()> {
     println!("---===[ Analyzing Optimization Job: {} ]===---", args.job_id);
 
@@ -207,7 +173,7 @@ async fn handle_analyze(args: AnalyzeArgs, db_pool: sqlx::PgPool) -> Result<()> 
             Cell::new(format!("{:.2}%", ranked.report.max_drawdown_pct.unwrap_or_default())),
             Cell::new(format!("{:.2}", ranked.report.calmar_ratio.unwrap_or_default())),
             Cell::new(format!("{:.2}", ranked.report.profit_factor.unwrap_or_default())),
-            Cell::new(ranked.report.total_trades.unwrap_or_default()),
+            Cell::new(ranked.report.total_trades.unwrap_or(0)),
             Cell::new(ranked.report.parameters.to_string()),
         ]);
     }
@@ -235,6 +201,81 @@ async fn handle_optimize(args: OptimizeArgs, db_pool: sqlx::PgPool) -> Result<()
     Ok(())
 }
 
+async fn handle_single_run(args: SingleRunArgs, db_pool: sqlx::PgPool) -> Result<()> {
+    let config = load_config(None)?;
+    let db_repo = DbRepository::new(db_pool);
+
+    println!("---===[ Starting Single Backtest Run ]===---");
+
+    let job_id = Uuid::new_v4();
+    let run_id = Uuid::new_v4();
+    let strategy_id = strategies::StrategyId::MACrossover;
+
+    let params = json!({
+        "ma_fast_period": config.strategies.ma_crossover.ma_fast_period,
+        "ma_slow_period": config.strategies.ma_crossover.ma_slow_period,
+        "trend_filter_period": config.strategies.ma_crossover.trend_filter_period,
+    });
+    
+    db_repo.save_optimization_job(
+        job_id,
+        &format!("{:?}", strategy_id),
+        &config.backtest.symbol,
+        "Single Run",
+    ).await?;
+    
+    db_repo.save_backtest_run(run_id, job_id, &params, "Pending").await?;
+    println!("Created database record for Run ID: {}", run_id);
+
+    let backtest_config = config.backtest.clone();
+    let start_date = args.from.unwrap_or(backtest_config.start_date);
+    let end_date = args.to.unwrap_or(backtest_config.end_date);
+    let symbol = backtest_config.symbol.clone();
+    let interval = backtest_config.interval.clone();
+
+    println!("Period: {} to {}", start_date, end_date);
+    println!("Symbol: {}, Interval: {}", symbol, interval);
+
+    let analytics_engine = analytics::AnalyticsEngine::new();
+    let portfolio = Portfolio::new(backtest_config.initial_capital);
+    let executor = Box::new(SimulatedExecutor::new(config.simulation.clone()));
+    let risk_manager = Box::new(SimpleRiskManager::new(config.risk_management.clone())?);
+    let strategy = create_strategy(strategy_id, &config, &symbol)?;
+    println!("Strategy: {:?}", strategy_id);
+
+    let mut backtester = Backtester::new(
+        run_id,
+        symbol,
+        interval,
+        portfolio,
+        strategy,
+        risk_manager,
+        executor,
+        analytics_engine,
+        db_repo.clone(),
+    );
+    
+    let report_result = backtester.run(
+        start_date.and_hms_opt(0,0,0).unwrap().and_local_timezone(Utc).unwrap(),
+        end_date.and_hms_opt(23,59,59).unwrap().and_local_timezone(Utc).unwrap()
+    ).await;
+
+    match report_result {
+        Ok(report) => {
+            db_repo.update_run_status(run_id, "Completed").await?;
+            println!("\n---===[ Backtest Report (Run ID: {}) ]===---", run_id);
+            println!("{:#?}", report);
+        }
+        Err(e) => {
+            db_repo.update_run_status(run_id, "Failed").await?;
+            eprintln!("\n---===[ Backtest Failed (Run ID: {}) ]===---", run_id);
+            eprintln!("Error: {:?}", e);
+        }
+    }
+
+    Ok(())
+}
+
 async fn handle_backfill(args: BackfillArgs, db_pool: sqlx::PgPool) -> Result<()> {
     println!(
         "Starting backfill for {} on interval {} from {} to {}",
@@ -242,7 +283,7 @@ async fn handle_backfill(args: BackfillArgs, db_pool: sqlx::PgPool) -> Result<()
     );
 
     let db_repo = DbRepository::new(db_pool);
-    let api_client = BinanceClient::new();
+    let _api_client = BinanceClient::new();
 
     let date_ranges = generate_monthly_ranges(args.from, args.to);
     

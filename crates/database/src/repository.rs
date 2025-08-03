@@ -25,7 +25,28 @@ pub struct DbBacktestRun {
     pub parameters: JsonValue,
     pub run_status: String,
 }
+/// Represents a row from the `wfo_jobs` table.
+#[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
+pub struct WfoJob {
+    pub wfo_job_id: Uuid,
+    pub strategy_id: String,
+    pub symbol: String,
+    pub in_sample_period_months: i32,
+    pub out_of_sample_period_months: i32,
+    pub wfo_status: String,
+    pub created_at: DateTime<Utc>,
+}
 
+/// Represents a row from the `wfo_runs` table, detailing a single OOS run.
+#[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
+pub struct WfoRun {
+    pub wfo_run_id: Uuid,
+    pub wfo_job_id: Uuid,
+    pub oos_run_id: Uuid,
+    pub best_in_sample_parameters: JsonValue,
+    pub oos_start_date: DateTime<Utc>,
+    pub oos_end_date: DateTime<Utc>,
+}
 /// A struct that represents the result of joining `performance_reports`
 /// with `backtest_runs` to get a complete picture of a single run.
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
@@ -326,6 +347,59 @@ impl DbRepository {
         }
 
         tx.commit().await?;
+        Ok(())
+    }
+    /// Creates a new top-level record for a Walk-Forward Optimization job.
+    pub async fn save_wfo_job(
+        &self,
+        wfo_job_id: Uuid,
+        strategy_id: &str,
+        symbol: &str,
+        in_sample_period_months: i32,
+        out_of_sample_period_months: i32,
+        wfo_status: &str,
+    ) -> Result<(), DbError> {
+        sqlx::query!(
+            r#"
+            INSERT INTO wfo_jobs (wfo_job_id, strategy_id, symbol, in_sample_period_months, out_of_sample_period_months, wfo_status, created_at)
+            VALUES ($1, $2, $3, $4, $5, $6, NOW())
+            "#,
+            wfo_job_id,
+            strategy_id,
+            symbol,
+            in_sample_period_months,
+            out_of_sample_period_months,
+            wfo_status
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Saves the record of a single, completed out-of-sample run within a WFO job.
+    pub async fn save_wfo_run(
+        &self,
+        wfo_run_id: Uuid,
+        wfo_job_id: Uuid,
+        oos_run_id: Uuid,
+        best_in_sample_parameters: &JsonValue,
+        oos_start_date: DateTime<Utc>,
+        oos_end_date: DateTime<Utc>,
+    ) -> Result<(), DbError> {
+        sqlx::query!(
+            r#"
+            INSERT INTO wfo_runs (wfo_run_id, wfo_job_id, oos_run_id, best_in_sample_parameters, oos_start_date, oos_end_date)
+            VALUES ($1, $2, $3, $4, $5, $6)
+            "#,
+            wfo_run_id,
+            wfo_job_id,
+            oos_run_id,
+            best_in_sample_parameters,
+            oos_start_date,
+            oos_end_date
+        )
+        .execute(&self.pool)
+        .await?;
         Ok(())
     }
 }

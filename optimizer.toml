@@ -42,3 +42,16 @@ weight_profit_factor = 0.3
 weight_calmar_ratio = 0.5
 # How much do we value the magnitude of wins vs losses? (Payoff Ratio)
 weight_avg_win_loss_ratio = 0.2
+
+# ==============================================================================
+# Walk-Forward Optimization (WFO) Configuration (Optional)
+#
+# Uncomment to run this job as a WFO instead of a standard optimization.
+# Periods are defined in weeks, which is ideal for shorter-term strategies.
+# ==============================================================================
+[wfo]
+# The length of the "In-Sample" or "Training" period.
+in_sample_weeks = 8
+#
+# The length of the "Out-of-Sample" or "Testing" period.
+out_of_sample_weeks = 2

@@ -38,6 +38,11 @@ impl Optimizer {
         }
     }
 
+    /// Returns the job ID for this optimizer instance.
+    pub fn job_id(&self) -> Uuid {
+        self.job_id
+    }
+
     pub async fn run(&self) -> Result<(), OptimizerError> {
         self.initialize_job().await?;
 
@@ -152,7 +157,7 @@ impl Optimizer {
         Ok(())
     }
 
-    fn create_strategy_instance(&self, optimized_params: &JsonValue) -> Result<Box<dyn strategies::Strategy>, OptimizerError> {
+    pub fn create_strategy_instance(&self, optimized_params: &JsonValue) -> Result<Box<dyn strategies::Strategy>, OptimizerError> {
         let strategy_id = self.config.base_config.strategy_id;
         let mut temp_config = self.base_config.clone();
         

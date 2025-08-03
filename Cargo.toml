@@ -15,7 +15,7 @@ members = [
     "crates/optimizer",
     "crates/database",
     "crates/api-client",
-    "crates/web-server", "crates/configuration", "crates/executor", "crates/analyzer",
+    "crates/web-server", "crates/configuration", "crates/executor", "crates/analyzer", "crates/wfo",
 ]
 resolver = "2"
 
@@ -39,6 +39,7 @@ database = { path = "crates/database" }
 executor = { path = "crates/executor" }
 risk = { path = "crates/risk" }
 strategies = { path = "crates/strategies" }
+wfo = { path = "crates/wfo" }
 
 # ==============================================================================
 # External Dependencies
