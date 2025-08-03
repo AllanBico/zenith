@@ -11,7 +11,8 @@ use strategies::Strategy;
 use tokio::sync::Mutex;
 use uuid::Uuid;
 use chrono::Utc;
-
+pub mod reconciler;
+pub use reconciler::StateReconciler;
 /// Rounds quantity to the appropriate precision for the given symbol.
 /// This is a simple implementation - in production, you'd fetch this from exchange info.
 fn round_quantity_to_precision(symbol: &str, quantity: Decimal) -> Decimal {
@@ -196,14 +197,29 @@ impl Engine {
 
         // 2. Set up the live data subscription.
         let symbols: Vec<String> = self.bots.keys().cloned().collect();
-        let interval = &self.live_config.interval; // Use the interval from live.toml
+        if symbols.is_empty() {
+            println!("[WARN] No bots enabled in live.toml. Exiting.");
+            return Ok(());
+        }
+        let interval = &self.base_config.backtest.interval;
         
         let connector = api_client::LiveConnector::new(self.live_config.live_trading_enabled);
         let mut kline_rx = connector.subscribe_to_klines(&symbols, interval)?;
         
+        // --- NEW: Launch the State Reconciler ---
+        // 3. Create and spawn the reconciler as a concurrent background task.
+        let reconciler = StateReconciler::new(
+            Arc::clone(&self.portfolio),   // Give it a shared pointer to the portfolio
+            Arc::clone(&self.api_client),  // Give it a shared pointer to the api_client
+            self.db_repo.clone(),          // Give it a clone of the db_repo
+        );
+        tokio::spawn(reconciler.start());
+        // The reconciler will now run in the background, checking our state every 30 seconds.
+        // --- END NEW SECTION ---
+        
         println!("\n--- Engine is running. Subscribed to {} kline streams. Waiting for market data... ---", symbols.len());
 
-        // 3. Enter the main event loop.
+        // 4. Enter the main event loop.
         while let Some((symbol, kline)) = kline_rx.recv().await {
             // Create a wrapper with the actual symbol from the WebSocket
             let kline_with_symbol = KlineWithSymbol {
