@@ -31,13 +31,16 @@ async fn main() -> Result<()> {
 
     let cli = Cli::parse();
 
+    // Load the base configuration once
+    let base_config = load_config(None)?;
+
     match cli.command {
-        Commands::Backfill(args) => handle_backfill(args, db_pool).await?,
-        Commands::SingleRun(args) => handle_single_run(args, db_pool).await?,
-        Commands::Optimize(args) => handle_optimize(args, db_pool).await?,
-        Commands::Analyze(args) => handle_analyze(args, db_pool).await?,
-        Commands::Wfo(args) => handle_wfo(args, db_pool).await?,
-        Commands::PortfolioRun(args) => handle_portfolio_run(args, db_pool).await?, // New command
+        Commands::Backfill(args) => handle_backfill(args, db_pool, base_config.clone()).await?,
+        Commands::SingleRun(args) => handle_single_run(args, db_pool, base_config.clone()).await?,
+        Commands::Optimize(args) => handle_optimize(args, db_pool, base_config.clone()).await?,
+        Commands::Analyze(args) => handle_analyze(args, db_pool, base_config.clone()).await?,
+        Commands::Wfo(args) => handle_wfo(args, db_pool, base_config.clone()).await?,
+        Commands::PortfolioRun(args) => handle_portfolio_run(args, db_pool, base_config.clone()).await?, // New command
     }
 
     Ok(())
@@ -126,7 +129,7 @@ struct PortfolioRunArgs {
 // Command Handlers
 // ==============================================================================
 
-async fn handle_portfolio_run(args: PortfolioRunArgs, db_pool: sqlx::PgPool) -> Result<()> {
+async fn handle_portfolio_run(args: PortfolioRunArgs, db_pool: sqlx::PgPool, base_config: configuration::Config) -> Result<()> {
     println!("---===[ Starting Portfolio-Level Backtest ]===---");
 
     // 1. Load Configurations
@@ -211,7 +214,7 @@ fn create_strategy_from_portfolio_config(
 
 
 // ... (all other handler functions are unchanged) ...
-async fn handle_wfo(args: WfoArgs, db_pool: sqlx::PgPool) -> Result<()> {
+async fn handle_wfo(args: WfoArgs, db_pool: sqlx::PgPool, base_config: configuration::Config) -> Result<()> {
     println!("---===[ Starting Walk-Forward Optimization Job ]===---");
 
     let base_config = load_config(None)?;
@@ -234,7 +237,7 @@ async fn handle_wfo(args: WfoArgs, db_pool: sqlx::PgPool) -> Result<()> {
 
     Ok(())
 }
-async fn handle_analyze(args: AnalyzeArgs, db_pool: sqlx::PgPool) -> Result<()> {
+async fn handle_analyze(args: AnalyzeArgs, db_pool: sqlx::PgPool, base_config: configuration::Config) -> Result<()> {
     println!("---===[ Analyzing Optimization Job: {} ]===---", args.job_id);
 
     let optimizer_config = load_optimizer_config(&args.config)?;
@@ -272,7 +275,7 @@ async fn handle_analyze(args: AnalyzeArgs, db_pool: sqlx::PgPool) -> Result<()> 
     println!("{table}");
     Ok(())
 }
-async fn handle_optimize(args: OptimizeArgs, db_pool: sqlx::PgPool) -> Result<()> {
+async fn handle_optimize(args: OptimizeArgs, db_pool: sqlx::PgPool, base_config: configuration::Config) -> Result<()> {
     println!("---===[ Starting Optimization Job ]===---");
 
     println!("Loading base configuration from config.toml...");
@@ -290,7 +293,7 @@ async fn handle_optimize(args: OptimizeArgs, db_pool: sqlx::PgPool) -> Result<()
     println!("\nOptimization process finished.");
     Ok(())
 }
-async fn handle_single_run(args: SingleRunArgs, db_pool: sqlx::PgPool) -> Result<()> {
+async fn handle_single_run(args: SingleRunArgs, db_pool: sqlx::PgPool, base_config: configuration::Config) -> Result<()> {
     let config = load_config(None)?;
     let db_repo = DbRepository::new(db_pool);
 
@@ -364,14 +367,14 @@ async fn handle_single_run(args: SingleRunArgs, db_pool: sqlx::PgPool) -> Result
 
     Ok(())
 }
-async fn handle_backfill(args: BackfillArgs, db_pool: sqlx::PgPool) -> Result<()> {
+async fn handle_backfill(args: BackfillArgs, db_pool: sqlx::PgPool, base_config: configuration::Config) -> Result<()> {
     println!(
         "Starting backfill for {} on interval {} from {} to {}",
         args.symbol, args.from, args.interval, args.to
     );
 
     let db_repo = DbRepository::new(db_pool);
-    let _api_client = BinanceClient::new();
+    let _api_client = BinanceClient::new(false, &base_config.api);
 
     let date_ranges = generate_monthly_ranges(args.from, args.to);
     
@@ -385,7 +388,7 @@ async fn handle_backfill(args: BackfillArgs, db_pool: sqlx::PgPool) -> Result<()
     let tasks: Vec<_> = date_ranges
         .into_iter()
         .map(|(start, end)| {
-            let api_client_clone = BinanceClient::new();
+            let api_client_clone = BinanceClient::new(false, &base_config.api);
             let db_repo_clone = db_repo.clone();
             let symbol = args.symbol.clone();
             let interval = args.interval.clone();

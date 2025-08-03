@@ -46,6 +46,11 @@ pub fn load_config(config_path: Option<&str>) -> Result<Config, ConfigError> {
         .add_source(config::File::with_name(config_path).required(true))
         // Add environment variables with APP_ prefix (e.g., APP_SIMULATION__TAKER_FEE_PCT)
         .add_source(
+            config::Environment::with_prefix("ZENITH")
+                .prefix_separator("_")
+                .separator("__"),
+        )
+        .add_source(
             config::Environment::with_prefix("APP")
                 .prefix_separator("__")
                 .separator("__")

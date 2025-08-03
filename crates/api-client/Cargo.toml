@@ -10,7 +10,7 @@ edition = "2024"
 # Depends on core-types to understand the data structures (e.g., Kline)
 # that it needs to deserialize the API responses into.
 core-types = { path = "../core-types" }
-
+configuration = { path = "../configuration" }
 # ==============================================================================
 # External Dependencies
 # ==============================================================================
@@ -26,7 +26,7 @@ serde_json = "1.0"
 rust_decimal = { version = "1.35", features = ["db-postgres"] }
 
 # For defining the crate's specific error types.
-thiserror = "1.0"
+thiserror = "2.0"
 
 # Enables the use of `async fn` in traits, which is essential for testability
 # and defining a clean API client interface.
@@ -37,3 +37,10 @@ tokio = { version = "1", features = ["full"] }
 
 # For handling timestamps in API requests.
 chrono = "0.4"
+# For HMAC (Hash-based Message Authentication Code) functionality.
+hmac = "0.12"
+# For the SHA-256 hashing algorithm.
+sha2 = "0.10"
+hex = "0.4"
+# For serializing Rust structs into URL query strings.
+serde_qs = "0.12"

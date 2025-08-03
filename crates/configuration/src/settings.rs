@@ -6,13 +6,30 @@ use core_types::enums::StrategyId;
 /// The root configuration structure for the entire application.
 #[derive(Debug, Clone, Deserialize)]
 pub struct Config {
+    pub api: ApiConfig,
     pub simulation: Simulation,
     pub risk_management: RiskManagement,
     pub strategies: Strategies,
     /// Configuration for backtesting parameters
     pub backtest: Backtest,
 }
+/// Holds the API connection details and secrets for different environments.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ApiConfig {
+    pub binance_api_key: String,
+    pub binance_api_secret: String,
+    #[serde(default)] // Use default (empty) if not provided by env
+    pub testnet: ApiKeys,
+    #[serde(default)] // Use default (empty) if not provided by env
+    pub production: ApiKeys,
+}
 
+/// A structure to hold an API key and secret pair.
+#[derive(Debug, Clone, Deserialize, Default)] // Default provides empty strings
+pub struct ApiKeys {
+    pub key: String,
+    pub secret: String,
+}
 /// Contains parameters for a single backtest run.
 #[derive(Debug, Clone, Deserialize)]
 pub struct Backtest {
