@@ -1,23 +1,24 @@
 use anyhow::Result;
-use api_client::{ApiClient, BinanceClient};
+use api_client::{ApiClient, BinanceClient}; // We need both the trait and the concrete type
 use backtester::Backtester;
-use chrono::{DateTime, NaiveDate, Utc, Datelike, Duration};
+use chrono::{DateTime, NaiveDate, Utc, Duration, Datelike};
 use clap::{Parser, Subcommand};
 use comfy_table::{presets::UTF8_FULL, Cell, ContentArrangement, Table};
-use configuration::{load_config, load_optimizer_config, PortfolioBotConfig}; // Fixed import
+use configuration::{load_config, load_live_config, load_optimizer_config, load_portfolio_config, PortfolioBotConfig, MACrossoverParams, ProbReversionParams, SuperTrendParams};
 use database::{connect, run_migrations, DbRepository};
+use engine::Engine; // Import the Engine
 use executor::{Portfolio, SimulatedExecutor};
 use futures::future::join_all;
 use indicatif::{ProgressBar, ProgressStyle};
 use optimizer::Optimizer;
-use portfolio_backtester::{load_and_prepare_data, PortfolioManager}; // Fixed import
+use portfolio_backtester::{load_and_prepare_data, PortfolioManager};
 use risk::SimpleRiskManager;
-use serde_json::from_value;
+use serde_json::{from_value, json};
 use strategies::{create_strategy, StrategyId};
-use configuration::{MACrossoverParams, ProbReversionParams, SuperTrendParams}; // Fixed import
 use std::collections::HashMap;
 use std::ops::Add;
 use std::path::PathBuf;
+use std::sync::Arc; // Import Arc for shared ownership
 use uuid::Uuid;
 use analyzer::Analyzer;
 use wfo::WfoEngine;
@@ -25,37 +26,20 @@ use wfo::WfoEngine;
 #[tokio::main]
 async fn main() -> Result<()> {
     dotenvy::dotenv().expect(".env file not found");
-    println!("--- Running API Client Sanity Check (Testnet) ---");
-let config = load_config(None)?; // You would load your config here
-let api_client = api_client::BinanceClient::new(false, &config.api); // false = not live_mode = Testnet
 
-match api_client.get_account_balance().await {
-    Ok(balances) => {
-        println!("Successfully fetched account balances:");
-        for balance in balances.iter().filter(|b| b.balance > "0".parse().unwrap()) {
-             println!("  Asset: {}, Available: {}", balance.asset, balance.available_balance);
-        }
-    }
-    Err(e) => {
-        eprintln!("Failed to fetch account balance: {:?}", e);
-    }
-}
-println!("--- Sanity Check Complete ---");
     let db_pool = connect().await?;
     run_migrations(&db_pool).await?;
 
     let cli = Cli::parse();
 
-    // Load the base configuration once
-    let base_config = load_config(None)?;
-
     match cli.command {
-        Commands::Backfill(args) => handle_backfill(args, db_pool, base_config.clone()).await?,
-        Commands::SingleRun(args) => handle_single_run(args, db_pool, base_config.clone()).await?,
-        Commands::Optimize(args) => handle_optimize(args, db_pool, base_config.clone()).await?,
-        Commands::Analyze(args) => handle_analyze(args, db_pool, base_config.clone()).await?,
-        Commands::Wfo(args) => handle_wfo(args, db_pool, base_config.clone()).await?,
-        Commands::PortfolioRun(args) => handle_portfolio_run(args, db_pool, base_config.clone()).await?, // New command
+        Commands::Backfill(args) => handle_backfill(args, db_pool).await?,
+        Commands::SingleRun(args) => handle_single_run(args, db_pool).await?,
+        Commands::Optimize(args) => handle_optimize(args, db_pool).await?,
+        Commands::Analyze(args) => handle_analyze(args, db_pool).await?,
+        Commands::Wfo(args) => handle_wfo(args, db_pool).await?,
+        Commands::PortfolioRun(args) => handle_portfolio_run(args, db_pool).await?,
+        Commands::Run(args) => handle_run(args, db_pool).await?, // New command
     }
 
     Ok(())
@@ -79,8 +63,9 @@ enum Commands {
     Optimize(OptimizeArgs),
     Analyze(AnalyzeArgs),
     Wfo(WfoArgs),
-    /// Run a portfolio-level backtest from a portfolio definition file.
     PortfolioRun(PortfolioRunArgs),
+    /// Run the live trading engine.
+    Run(RunArgs),
 }
 
 // ... (Other arg structs are unchanged) ...
@@ -129,37 +114,75 @@ struct WfoArgs {
 
 #[derive(Parser)]
 struct PortfolioRunArgs {
-    /// Optional start date to override config default (YYYY-MM-DD).
     #[arg(long)]
     from: Option<NaiveDate>,
-    /// Optional end date to override config default (YYYY-MM-DD).
     #[arg(long)]
     to: Option<NaiveDate>,
-    /// Path to the portfolio definition file.
     #[arg(long, short, default_value = "portfolio.toml")]
     portfolio: PathBuf,
+}
+
+#[derive(Parser)]
+struct RunArgs {
+    /// Use the production Binance API (real money). Defaults to Testnet.
+    #[arg(long)]
+    live: bool,
+    /// Path to the live trading configuration file.
+    #[arg(long, short, default_value = "live.toml")]
+    config: PathBuf,
 }
 
 // ==============================================================================
 // Command Handlers
 // ==============================================================================
 
-async fn handle_portfolio_run(args: PortfolioRunArgs, db_pool: sqlx::PgPool, base_config: configuration::Config) -> Result<()> {
-    println!("---===[ Starting Portfolio-Level Backtest ]===---");
-
+async fn handle_run(args: RunArgs, db_pool: sqlx::PgPool) -> Result<()> {
     // 1. Load Configurations
     let base_config = load_config(None)?;
-    let portfolio_config = configuration::load_portfolio_config(&args.portfolio)?;
+    let live_config = load_live_config(&args.config)?;
+
+    // 2. OBEY THE MASTER SAFETY SWITCH
+    if args.live && !live_config.live_trading_enabled {
+        anyhow::bail!("FATAL: Attempted to run in --live mode, but `live_trading_enabled` is false in live.toml. Aborting for safety.");
+    }
+    let mode = if args.live { "LIVE (REAL MONEY)" } else { "TESTNET" };
+    println!("---===[ Starting Live Trading Engine in {} Mode ]===---", mode);
+
+    // 3. Instantiate Shared Components
+    // We use Arc to allow shared ownership across async tasks.
+    let api_client = Arc::new(BinanceClient::new(args.live, &base_config.api));
+    let db_repo = DbRepository::new(db_pool);
+    let _risk_manager = Arc::new(SimpleRiskManager::new(base_config.risk_management.clone())?);
+
+    // 4. Create and Run the Engine
+    let mut engine = Engine::new(
+        live_config,
+        base_config,
+        api_client,
+        db_repo,
+    )?;
+
+    engine.run().await?;
+    
+    println!("Engine has stopped.");
+    Ok(())
+}
+
+
+// ... (all other handler functions are unchanged) ...
+async fn handle_portfolio_run(args: PortfolioRunArgs, db_pool: sqlx::PgPool) -> Result<()> {
+    println!("---===[ Starting Portfolio-Level Backtest ]===---");
+
+    let base_config = load_config(None)?;
+    let portfolio_config = load_portfolio_config(&args.portfolio)?;
     println!("Loaded portfolio definition with {} bots.", portfolio_config.bots.len());
 
-    // 2. Instantiate Shared Components
     let db_repo = DbRepository::new(db_pool);
     let analytics_engine = analytics::AnalyticsEngine::new();
     let portfolio = Portfolio::new(base_config.backtest.initial_capital);
     let executor = Box::new(SimulatedExecutor::new(base_config.simulation.clone()));
     let risk_manager = Box::new(SimpleRiskManager::new(base_config.risk_management.clone())?);
 
-    // 3. Load and Prepare Master Event Stream
     let start_date = args.from.unwrap_or(base_config.backtest.start_date);
     let end_date = args.to.unwrap_or(base_config.backtest.end_date);
     let interval = &base_config.backtest.interval;
@@ -173,14 +196,12 @@ async fn handle_portfolio_run(args: PortfolioRunArgs, db_pool: sqlx::PgPool, bas
     ).await?;
     println!("Master event stream created with {} events.", event_stream.len());
 
-    // 4. Instantiate All Strategies
     let mut strategies = HashMap::<String, Box<dyn strategies::Strategy>>::new();
     for bot_config in portfolio_config.bots {
         let strategy = create_strategy_from_portfolio_config(&base_config, &bot_config)?;
         strategies.insert(bot_config.symbol, strategy);
     }
 
-    // 5. Instantiate and Run the Portfolio Manager
     let mut manager = PortfolioManager::new(
         base_config,
         portfolio,
@@ -192,22 +213,17 @@ async fn handle_portfolio_run(args: PortfolioRunArgs, db_pool: sqlx::PgPool, bas
     
     let report = manager.run(event_stream).await?;
 
-    // 6. Display the final, unified report
     println!("\n---===[ Portfolio Backtest Report ]===---");
     println!("{:#?}", report);
     
     Ok(())
 }
-
-/// Helper function to create a strategy instance from a bot configuration.
-/// It works by creating a temporary, modified copy of the base config.
 fn create_strategy_from_portfolio_config(
     base_config: &configuration::Config,
     bot_config: &PortfolioBotConfig,
 ) -> Result<Box<dyn strategies::Strategy>> {
     let mut temp_config = base_config.clone();
     
-    // Merge the specific bot params into the temporary config
     match bot_config.strategy_id {
         StrategyId::MACrossover => {
             let params: MACrossoverParams = from_value(bot_config.params.clone())?;
@@ -226,10 +242,7 @@ fn create_strategy_from_portfolio_config(
 
     Ok(create_strategy(bot_config.strategy_id, &temp_config, &bot_config.symbol)?)
 }
-
-
-// ... (all other handler functions are unchanged) ...
-async fn handle_wfo(args: WfoArgs, db_pool: sqlx::PgPool, base_config: configuration::Config) -> Result<()> {
+async fn handle_wfo(args: WfoArgs, db_pool: sqlx::PgPool) -> Result<()> {
     println!("---===[ Starting Walk-Forward Optimization Job ]===---");
 
     let base_config = load_config(None)?;
@@ -252,7 +265,7 @@ async fn handle_wfo(args: WfoArgs, db_pool: sqlx::PgPool, base_config: configura
 
     Ok(())
 }
-async fn handle_analyze(args: AnalyzeArgs, db_pool: sqlx::PgPool, base_config: configuration::Config) -> Result<()> {
+async fn handle_analyze(args: AnalyzeArgs, db_pool: sqlx::PgPool) -> Result<()> {
     println!("---===[ Analyzing Optimization Job: {} ]===---", args.job_id);
 
     let optimizer_config = load_optimizer_config(&args.config)?;
@@ -290,7 +303,7 @@ async fn handle_analyze(args: AnalyzeArgs, db_pool: sqlx::PgPool, base_config: c
     println!("{table}");
     Ok(())
 }
-async fn handle_optimize(args: OptimizeArgs, db_pool: sqlx::PgPool, base_config: configuration::Config) -> Result<()> {
+async fn handle_optimize(args: OptimizeArgs, db_pool: sqlx::PgPool) -> Result<()> {
     println!("---===[ Starting Optimization Job ]===---");
 
     println!("Loading base configuration from config.toml...");
@@ -308,7 +321,7 @@ async fn handle_optimize(args: OptimizeArgs, db_pool: sqlx::PgPool, base_config:
     println!("\nOptimization process finished.");
     Ok(())
 }
-async fn handle_single_run(args: SingleRunArgs, db_pool: sqlx::PgPool, base_config: configuration::Config) -> Result<()> {
+async fn handle_single_run(args: SingleRunArgs, db_pool: sqlx::PgPool) -> Result<()> {
     let config = load_config(None)?;
     let db_repo = DbRepository::new(db_pool);
 
@@ -318,7 +331,7 @@ async fn handle_single_run(args: SingleRunArgs, db_pool: sqlx::PgPool, base_conf
     let run_id = Uuid::new_v4();
     let strategy_id = strategies::StrategyId::MACrossover;
 
-    let params = serde_json::json!({
+    let params = json!({
         "ma_fast_period": config.strategies.ma_crossover.ma_fast_period,
         "ma_slow_period": config.strategies.ma_crossover.ma_slow_period,
         "trend_filter_period": config.strategies.ma_crossover.trend_filter_period,
@@ -347,7 +360,7 @@ async fn handle_single_run(args: SingleRunArgs, db_pool: sqlx::PgPool, base_conf
     let portfolio = Portfolio::new(backtest_config.initial_capital);
     let executor = Box::new(SimulatedExecutor::new(config.simulation.clone()));
     let risk_manager = Box::new(SimpleRiskManager::new(config.risk_management.clone())?);
-    let strategy = create_strategy(strategy_id, &config, &symbol)?;
+    let strategy = create_strategy(strategy_id, &config, &config.backtest.symbol)?;
     println!("Strategy: {:?}", strategy_id);
 
     let mut backtester = Backtester::new(
@@ -382,14 +395,15 @@ async fn handle_single_run(args: SingleRunArgs, db_pool: sqlx::PgPool, base_conf
 
     Ok(())
 }
-async fn handle_backfill(args: BackfillArgs, db_pool: sqlx::PgPool, base_config: configuration::Config) -> Result<()> {
+async fn handle_backfill(args: BackfillArgs, db_pool: sqlx::PgPool) -> Result<()> {
     println!(
         "Starting backfill for {} on interval {} from {} to {}",
         args.symbol, args.from, args.interval, args.to
     );
 
     let db_repo = DbRepository::new(db_pool);
-    let _api_client = BinanceClient::new(false, &base_config.api);
+    let config = load_config(None)?;
+    let _api_client = BinanceClient::new(false, &config.api);
 
     let date_ranges = generate_monthly_ranges(args.from, args.to);
     
@@ -403,7 +417,7 @@ async fn handle_backfill(args: BackfillArgs, db_pool: sqlx::PgPool, base_config:
     let tasks: Vec<_> = date_ranges
         .into_iter()
         .map(|(start, end)| {
-            let api_client_clone = BinanceClient::new(false, &base_config.api);
+            let api_client_clone = BinanceClient::new(false, &config.api);
             let db_repo_clone = db_repo.clone();
             let symbol = args.symbol.clone();
             let interval = args.interval.clone();

@@ -45,6 +45,29 @@ pub struct Backtest {
     pub end_date: NaiveDate,
 }
 
+/// Defines the configuration for the live trading engine.
+#[derive(Debug, Clone, Deserialize)]
+pub struct LiveConfig {
+    /// A master safety switch to enable or disable all live trading.
+    pub live_trading_enabled: bool,
+    /// The timeframe interval to use for all bots (e.g., "1m", "5m", "1h").
+    pub interval: String,
+    /// A collection of individual trading bots to run.
+    #[serde(rename = "bot")]
+    pub bots: Vec<LiveBotConfig>,
+}
+
+/// Defines a single trading bot for the live engine.
+#[derive(Debug, Clone, Deserialize)]
+pub struct LiveBotConfig {
+    /// A master switch to enable or disable this specific bot.
+    pub enabled: bool,
+    pub symbol: String,
+    pub strategy_id: StrategyId,
+    /// The specific parameters for this bot's strategy, stored as a flexible object.
+    pub params: JsonValue,
+}
+
 /// Contains parameters for the backtesting and simulation engine.
 #[derive(Debug, Clone, Deserialize)]
 pub struct Simulation {

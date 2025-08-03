@@ -11,7 +11,7 @@ pub mod settings;
 
 // Re-export the core types to provide a clean public API.
 pub use settings::{
-    Config, FundingRateArbParams, MACrossoverParams, ProbReversionParams, RiskManagement,PortfolioBotConfig, PortfolioConfig,
+    LiveBotConfig, LiveConfig,Config, FundingRateArbParams, MACrossoverParams, ProbReversionParams, RiskManagement,PortfolioBotConfig, PortfolioConfig,
     Simulation, Strategies, SuperTrendParams,
 };
 
@@ -105,4 +105,12 @@ pub fn load_portfolio_config(path: &Path) -> Result<PortfolioConfig, ConfigError
         .add_source(config::File::from(path))
         .build()?;
     builder.try_deserialize::<PortfolioConfig>().map_err(Into::into)
+}
+
+/// Loads the live trading configuration from a specific TOML file path.
+pub fn load_live_config(path: &Path) -> Result<LiveConfig, ConfigError> {
+    let builder = config::Config::builder()
+        .add_source(config::File::from(path))
+        .build()?;
+    builder.try_deserialize::<LiveConfig>().map_err(Into::into)
 }

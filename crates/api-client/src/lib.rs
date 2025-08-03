@@ -14,10 +14,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 mod auth;
 pub mod error;
 pub mod responses;
-
+pub mod live_connector;
 // --- Public API ---
 pub use responses::{BalanceResponse, OrderResponse, PositionResponse, ApiErrorResponse};
-
+pub use live_connector::LiveConnector;
 /// The generic, abstract interface for a trading exchange API client.
 /// This trait is the contract that the live engine will use, allowing the
 /// underlying implementation (live or mock) to be swapped out.
@@ -202,7 +202,11 @@ impl ApiClient for BinanceClient {
         params.insert("leverage", leverage.to_string());
         
         #[derive(Deserialize)]
-        struct LeverageResponse { _leverage: u8, _symbol: String }
+        #[serde(rename_all = "camelCase")]
+        struct LeverageResponse { 
+            leverage: u8, 
+            symbol: String 
+        }
         self._post_signed::<LeverageResponse>("/fapi/v1/leverage", &mut params).await?;
         Ok(())
     }

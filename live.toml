@@ -1,0 +1,37 @@
+# ==============================================================================
+# Zenith Live Trading Configuration
+#
+# This file defines the portfolio of bots that will be run by the live engine.
+# It is the single source of truth for the live trading operation.
+# ==============================================================================
+
+# A master safety switch. If this is false, the engine will not place any real trades,
+# regardless of the individual bot settings.
+live_trading_enabled = false
+interval = "1m"
+
+# --- Bot 1: A trend-following strategy on Bitcoin ---
+# This bot is currently ACTIVE.
+[[bot]]
+enabled = true
+symbol = "BTCUSDT"
+strategy_id = "MACrossover"
+
+[bot.params]
+ma_fast_period = 1
+ma_slow_period = 2
+trend_filter_period = 2
+
+
+# --- Bot 2: A mean-reversion strategy on Ethereum ---
+# This bot is currently INACTIVE. The engine will load its config but will not
+# start it or subscribe to its data.
+[[bot]]
+enabled = true
+symbol = "ETHUSDT"
+strategy_id = "MACrossover"
+
+[bot.params]
+ma_fast_period = 1
+ma_slow_period = 2
+trend_filter_period = 2

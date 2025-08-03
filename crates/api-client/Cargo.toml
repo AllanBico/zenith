@@ -7,40 +7,37 @@ edition = "2024"
 # ==============================================================================
 # Workspace Dependencies
 # ==============================================================================
-# Depends on core-types to understand the data structures (e.g., Kline)
-# that it needs to deserialize the API responses into.
 core-types = { path = "../core-types" }
 configuration = { path = "../configuration" }
+
 # ==============================================================================
 # External Dependencies
 # ==============================================================================
-# The core HTTP client for making requests to the Binance API.
-# The "json" feature is essential for built-in response deserialization.
+# --- HTTP Client ---
 reqwest = { version = "0.12", features = ["json"] }
+serde_qs = "0.12"
 
-# For serializing/deserializing data structures.
+# --- WebSocket Client (NEW) ---
+# The core async WebSocket library, built on top of Tokio.
+# The "native-tls" feature is required to connect to secure "wss://" endpoints.
+tokio-tungstenite = { version = "0.21", features = ["native-tls"] }
+# Provides stream utilities, including the `StreamExt` trait needed to loop over messages.
+futures-util = "0.3"
+# A robust library for parsing and manipulating URLs.
+url = "2.5"
+
+# --- Serialization ---
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 
-# For precise decimal arithmetic in financial calculations
-rust_decimal = { version = "1.35", features = ["db-postgres"] }
-
-# For defining the crate's specific error types.
-thiserror = "2.0"
-
-# Enables the use of `async fn` in traits, which is essential for testability
-# and defining a clean API client interface.
-async-trait = "0.1"
-
-# The async runtime.
-tokio = { version = "1", features = ["full"] }
-
-# For handling timestamps in API requests.
-chrono = "0.4"
-# For HMAC (Hash-based Message Authentication Code) functionality.
-hmac = "0.12"
-# For the SHA-256 hashing algorithm.
-sha2 = "0.10"
+# --- Authentication ---
 hex = "0.4"
-# For serializing Rust structs into URL query strings.
-serde_qs = "0.12"
+hmac = "0.12"
+sha2 = "0.10"
+
+# --- Utilities ---
+thiserror = "1.0"
+async-trait = "0.1"
+tokio = { version = "1", features = ["full"] }
+chrono = "0.4"
+rust_decimal = "1.30.0"

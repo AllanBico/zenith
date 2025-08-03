@@ -4,3 +4,37 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+# ==============================================================================
+# Workspace Dependencies
+# ==============================================================================
+# The engine is the master orchestrator and needs access to all the core
+# components of the system to wire them together.
+core-types = { path = "../core-types" }
+configuration = { path = "../configuration" }
+strategies = { path = "../strategies" }
+risk = { path = "../risk" }
+# Executor is needed for the `Portfolio` state management struct.
+executor = { path = "../executor" }
+database = { path = "../database" }
+# ApiClient is the engine's bridge to the live exchange.
+api-client = { path = "../api-client" }
+# Events are needed to construct the `PortfolioState` for the risk manager.
+events = { path = "../events" }
+
+# ==============================================================================
+# External Dependencies
+# ==============================================================================
+# For creating the crate's specific error types.
+thiserror = "1.0"
+
+# The async runtime.
+tokio = { version = "1", features = ["full"] }
+
+# For handling the JSON parameter objects.
+serde_json = "1.0"
+
+# For generating unique IDs.
+uuid = { version = "1.8", features = ["v4"] }
+
+# For date and time handling.
+chrono = { version = "0.4", features = ["serde"] }
