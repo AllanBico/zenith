@@ -53,3 +53,10 @@ pub struct PositionResponse {
     pub symbol: String,
     pub un_realized_profit: Decimal,
 }
+
+/// Represents an error response from the Binance API.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ApiErrorResponse {
+    pub code: i16,
+    pub msg: String,
+}

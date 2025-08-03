@@ -25,7 +25,22 @@ use wfo::WfoEngine;
 #[tokio::main]
 async fn main() -> Result<()> {
     dotenvy::dotenv().expect(".env file not found");
+    println!("--- Running API Client Sanity Check (Testnet) ---");
+let config = load_config(None)?; // You would load your config here
+let api_client = api_client::BinanceClient::new(false, &config.api); // false = not live_mode = Testnet
 
+match api_client.get_account_balance().await {
+    Ok(balances) => {
+        println!("Successfully fetched account balances:");
+        for balance in balances.iter().filter(|b| b.balance > "0".parse().unwrap()) {
+             println!("  Asset: {}, Available: {}", balance.asset, balance.available_balance);
+        }
+    }
+    Err(e) => {
+        eprintln!("Failed to fetch account balance: {:?}", e);
+    }
+}
+println!("--- Sanity Check Complete ---");
     let db_pool = connect().await?;
     run_migrations(&db_pool).await?;
 

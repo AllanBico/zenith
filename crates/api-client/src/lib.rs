@@ -16,7 +16,7 @@ pub mod error;
 pub mod responses;
 
 // --- Public API ---
-pub use responses::{BalanceResponse, OrderResponse, PositionResponse};
+pub use responses::{BalanceResponse, OrderResponse, PositionResponse, ApiErrorResponse};
 
 /// The generic, abstract interface for a trading exchange API client.
 /// This trait is the contract that the live engine will use, allowing the
@@ -101,7 +101,17 @@ impl BinanceClient {
             self.base_url, path, query_string, signature
         );
 
-        self.client.get(&url).send().await?.json::<T>().await.map_err(|e| e.into())
+        let response = self.client.get(&url).send().await?;
+        let status = response.status();
+        let text = response.text().await?;
+
+        if status.is_success() {
+            serde_json::from_str::<T>(&text).map_err(|e| ApiError::Deserialization(e.to_string()))
+        } else {
+            let api_error: ApiErrorResponse = serde_json::from_str(&text)
+                .map_err(|e| ApiError::Deserialization(format!("Failed to deserialize error response: {}. Original text: {}", e, text)))?;
+            Err(ApiError::BinanceError(api_error.code, api_error.msg))
+        }
     }
 
     async fn _post_signed<T: DeserializeOwned>(
@@ -123,7 +133,17 @@ impl BinanceClient {
             self.base_url, path, query_string, signature
         );
         
-        self.client.post(&url).send().await?.json::<T>().await.map_err(|e| e.into())
+        let response = self.client.post(&url).send().await?;
+        let status = response.status();
+        let text = response.text().await?;
+
+        if status.is_success() {
+            serde_json::from_str::<T>(&text).map_err(|e| ApiError::Deserialization(e.to_string()))
+        } else {
+            let api_error: ApiErrorResponse = serde_json::from_str(&text)
+                .map_err(|e| ApiError::Deserialization(format!("Failed to deserialize error response: {}. Original text: {}", e, text)))?;
+            Err(ApiError::BinanceError(api_error.code, api_error.msg))
+        }
     }
 }
 

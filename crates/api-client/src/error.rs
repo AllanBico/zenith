@@ -13,4 +13,7 @@ pub enum ApiError {
 
     #[error("Invalid data format from API: {0}")]
     InvalidData(String),
+
+    #[error("Binance API Error (code: {0}): {1}")]
+    BinanceError(i16, String),
 }
