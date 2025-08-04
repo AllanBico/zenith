@@ -36,3 +36,10 @@ export const useSingleRuns = () => {
         queryFn: api.getSingleRuns,
     });
 };
+// Add this hook to your react-query hooks file
+export const useWfoJobs = () => {
+    return useQuery({
+        queryKey: ["wfoJobs"],
+        queryFn: api.getWfoJobs,
+    });
+};

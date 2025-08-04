@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::Transaction;
 use uuid::Uuid;
 use sqlx::FromRow;
+
 /// The `DbRepository` provides a high-level, application-specific interface
 /// to the database. It encapsulates all SQL queries and data access logic.
 #[derive(Debug, Clone)]

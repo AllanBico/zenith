@@ -5,10 +5,25 @@ import { EquityDataPoint } from "@/types/zenith";
 import { format } from "date-fns";
 
 export function EquityCurveChart({ data }: { data: EquityDataPoint[] }) {
-    const chartData = data.map(d => ({
-        date: new Date(d.timestamp),
-        equity: parseFloat(d.equity),
-    }));
+    const formatDate = (date: Date | string) => {
+        try {
+            const dateObj = typeof date === 'string' ? new Date(date) : date;
+            if (isNaN(dateObj.getTime())) {
+                return "Invalid Date";
+            }
+            return format(dateObj, 'yyyy-MM-dd HH:mm');
+        } catch (error) {
+            return "Invalid Date";
+        }
+    };
+
+    const chartData = data.map(d => {
+        const date = new Date(d.timestamp);
+        return {
+            date: isNaN(date.getTime()) ? new Date() : date, // Fallback to current date if invalid
+            equity: parseFloat(d.equity),
+        };
+    });
 
     return (
         <ChartContainer config={{}} className="w-full h-full">
@@ -22,13 +37,13 @@ export function EquityCurveChart({ data }: { data: EquityDataPoint[] }) {
                 <CartesianGrid vertical={false} />
                 <XAxis 
                     dataKey="date" 
-                    tickFormatter={(tick) => format(tick, 'yyyy-MM-dd')}
+                    tickFormatter={(tick) => formatDate(tick)}
                     />
                 <YAxis dataKey="equity" domain={['auto', 'auto']} />
                 <Tooltip 
                     content={<ChartTooltipContent 
                         formatter={(value, name) => [`$${(value as number).toFixed(2)}`, 'Equity']}
-                        labelFormatter={(label) => format(label, 'yyyy-MM-dd HH:mm')}
+                        labelFormatter={(label) => formatDate(label)}
                         />}
                     />
                 <Area

@@ -42,17 +42,23 @@ export interface OptimizationJob {
     equity_curve?: EquityDataPoint[];
   }
   
+  export interface Execution {
+    execution_id: string;
+    client_order_id: string;
+    symbol: string;
+    side: "Buy" | "Sell";
+    price: string;
+    quantity: string;
+    fee: string;
+    fee_asset: string;
+    timestamp: string;
+  }
+  
   export interface Trade {
-      trade_id: string;
-      run_id: string;
-      symbol: string;
-      entry_price: string;
-      entry_qty: string;
-      entry_timestamp: string;
-      exit_price: string;
-      exit_qty: string;
-      exit_timestamp: string;
-      pnl?: string; // We can calculate this on the frontend
+    trade_id: string;
+    symbol: string;
+    entry_execution: Execution;
+    exit_execution: Execution;
   }
   
   export interface EquityDataPoint {
@@ -61,7 +67,8 @@ export interface OptimizationJob {
   }
   
   // We will need a more detailed type for a full backtest run
-  export interface BacktestRunDetails extends FullReport {
+  export interface BacktestRunDetails {
+      report: FullReport;
       trades: Trade[];
       equity_curve: EquityDataPoint[];
   }
