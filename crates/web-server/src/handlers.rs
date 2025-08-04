@@ -1,5 +1,6 @@
 use crate::{error::AppError, AppState};
 use analyzer::{Analyzer, RankedReport};
+use database::repository::BacktestRunDetails;
 use axum::{
     extract::{
         ws::{Message, WebSocket, WebSocketUpgrade},
@@ -11,12 +12,17 @@ use axum::{
     Json,
 };
 use configuration::load_optimizer_config;
-use database::{DbOptimizationJob, FullReport};
+use database::{DbOptimizationJob, FullReport, WfoJob, WfoRun};
 
 use serde::Deserialize;
 use std::path::PathBuf;
 use std::sync::Arc;
 use uuid::Uuid;
+
+#[derive(Debug, Deserialize)]
+pub struct RunDetailsPath {
+    pub run_id: Uuid,
+}
 
 #[derive(Debug, Deserialize)]
 pub struct Pagination {
@@ -67,6 +73,35 @@ pub async fn get_backtest_run_details(
     Ok(Json(report))
 }
 
+/// # GET /api/backtest-runs/:run_id/details
+/// Fetches the full details for a single backtest run, including trades and equity curve.
+pub async fn get_backtest_run_full_details(
+    Path(run_id): Path<Uuid>,
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<BacktestRunDetails>, AppError> {
+    let details = state.db_repo.get_run_details(run_id).await?;
+    Ok(Json(details))
+}
+
+/// # GET /api/wfo-jobs
+/// Fetches all WFO jobs.
+pub async fn get_wfo_jobs(
+    State(state): State<Arc<AppState>>,
+    _pagination: Query<Pagination>,
+) -> Result<Json<Vec<WfoJob>>, AppError> {
+    let jobs = state.db_repo.get_all_wfo_jobs().await?;
+    Ok(Json(jobs))
+}
+
+/// # GET /api/wfo-jobs/:wfo_job_id/runs
+/// Fetches all runs for a specific WFO job.
+pub async fn get_wfo_job_runs(
+    Path(wfo_job_id): Path<Uuid>,
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<Vec<WfoRun>>, AppError> {
+    let runs = state.db_repo.get_wfo_runs_for_job(wfo_job_id).await?;
+    Ok(Json(runs))
+}
 /// # GET /ws (FIXED)
 /// The WebSocket endpoint. Note the corrected argument order.
 pub async fn websocket_handler(

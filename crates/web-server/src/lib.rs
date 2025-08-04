@@ -6,7 +6,7 @@ use axum::{
 use database::DbRepository;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use tower_http::cors::{Any, CorsLayer};
+use tower_http::cors::{Any, CorsLayer, AllowOrigin, ExposeHeaders, AllowHeaders};
 
 
 
@@ -30,17 +30,22 @@ pub async fn run_server(addr: SocketAddr) -> anyhow::Result<()> {
 
     let app_state = Arc::new(AppState { db_repo });
     let cors = CorsLayer::new()
-        .allow_origin(Any)
+        .allow_origin(AllowOrigin::any())
         .allow_methods(Any)
-        .allow_headers(Any);
+        .allow_headers(AllowHeaders::any())
+        .expose_headers(ExposeHeaders::any());
 
     // --- DEFINE THE APPLICATION ROUTES ---
     let app = Router::new()
         .route("/api/health", get(|| async { "OK" }))
+        .route("/api/cors-test", get(|| async { "CORS is working!" }))
         .route("/api/optimization-jobs", get(handlers::get_optimization_jobs))
         .route("/api/single-runs", get(handlers::get_single_runs))
         .route("/api/optimization-jobs/:job_id", get(handlers::get_optimization_job_details))
         .route("/api/backtest-runs/:run_id", get(handlers::get_backtest_run_details))
+        .route("/api/backtest-runs/:run_id/details", get(handlers::get_backtest_run_full_details))
+        .route("/api/wfo-jobs", get(handlers::get_wfo_jobs))
+        .route("/api/wfo-jobs/:wfo_job_id/runs", get(handlers::get_wfo_job_runs))
         // .route("/ws", get(handlers::websocket_handler)) // WebSocket handler will be added in the next task
         .with_state(app_state)
         .layer(cors)

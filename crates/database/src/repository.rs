@@ -1,7 +1,7 @@
 use crate::DbError;
 use analytics::PerformanceReport;
 use chrono::{DateTime, Utc};
-use core_types::{Kline, Trade};
+use core_types::{Kline, Trade, Execution, OrderSide};
 use rust_decimal::Decimal;
 use serde_json::Value as JsonValue;
 use sqlx::postgres::PgPool;
@@ -16,6 +16,21 @@ use sqlx::FromRow;
 #[derive(Debug, Clone)]
 pub struct DbRepository {
     pool: PgPool,
+}
+
+// Define a simple struct for an equity curve point
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EquityDataPoint {
+    pub timestamp: DateTime<Utc>,
+    pub equity: Decimal,
+}
+
+// This struct will hold all the data for the details page
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BacktestRunDetails {
+    pub report: FullReport,
+    pub trades: Vec<Trade>,
+    pub equity_curve: Vec<EquityDataPoint>,
 }
 // This struct represents a row fetched from the backtest_runs table.
 #[derive(FromRow, Debug, Clone)]
@@ -83,6 +98,20 @@ pub struct FullReport {
     pub average_loss: Option<Decimal>,
     pub payoff_ratio: Option<Decimal>,
     pub average_holding_period: Option<String>,
+}
+
+/// Database-specific trade struct that matches the trades table schema
+#[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
+pub struct DbTrade {
+    pub trade_id: Uuid,
+    pub run_id: Uuid,
+    pub symbol: String,
+    pub entry_price: Decimal,
+    pub entry_qty: Decimal,
+    pub entry_timestamp: DateTime<Utc>,
+    pub exit_price: Decimal,
+    pub exit_qty: Decimal,
+    pub exit_timestamp: DateTime<Utc>,
 }
 impl DbRepository {
     /// Creates a new `DbRepository` with a shared database connection pool.
@@ -446,5 +475,85 @@ impl DbRepository {
         .execute(&self.pool)
         .await?;
         Ok(())
+    }
+    pub async fn get_run_details(&self, run_id: Uuid) -> Result<BacktestRunDetails, DbError> {
+        let report_future = self.get_full_report_for_run(run_id);
+        
+        let trades_future = sqlx::query_as!(
+            DbTrade,
+            r#"SELECT trade_id, run_id, symbol, entry_price, entry_qty, entry_timestamp, exit_price, exit_qty, exit_timestamp FROM trades WHERE run_id = $1 ORDER BY entry_timestamp ASC"#,
+            run_id
+        ).fetch_all(&self.pool);
+
+        let equity_curve_future = sqlx::query_as!(
+            EquityDataPoint,
+            "SELECT timestamp, equity FROM equity_curves WHERE run_id = $1 ORDER BY timestamp ASC",
+            run_id
+        ).fetch_all(&self.pool);
+
+        let (report_res, trades_res, equity_curve_res) = tokio::join!(report_future, trades_future, equity_curve_future);
+
+        // Convert DbTrade to Trade (core_types)
+        let trades: Vec<Trade> = trades_res?.into_iter().map(|db_trade| {
+            let entry_execution = Execution {
+                execution_id: Uuid::new_v4(), // Generate new ID since we don't store it in DB
+                client_order_id: Uuid::new_v4(), // Generate new ID since we don't store it in DB
+                symbol: db_trade.symbol.clone(),
+                side: OrderSide::Buy, // We'll need to determine this from context
+                price: db_trade.entry_price,
+                quantity: db_trade.entry_qty,
+                fee: Decimal::ZERO, // Not stored in DB
+                fee_asset: String::new(), // Not stored in DB
+                timestamp: db_trade.entry_timestamp,
+            };
+            
+            let exit_execution = Execution {
+                execution_id: Uuid::new_v4(), // Generate new ID since we don't store it in DB
+                client_order_id: Uuid::new_v4(), // Generate new ID since we don't store it in DB
+                symbol: db_trade.symbol.clone(),
+                side: OrderSide::Sell, // We'll need to determine this from context
+                price: db_trade.exit_price,
+                quantity: db_trade.exit_qty,
+                fee: Decimal::ZERO, // Not stored in DB
+                fee_asset: String::new(), // Not stored in DB
+                timestamp: db_trade.exit_timestamp,
+            };
+
+            Trade {
+                trade_id: db_trade.trade_id,
+                symbol: db_trade.symbol,
+                entry_execution,
+                exit_execution,
+            }
+        }).collect();
+
+        Ok(BacktestRunDetails {
+            report: report_res?,
+            trades,
+            equity_curve: equity_curve_res?,
+        })
+    }
+
+    /// Fetches all WFO jobs from the database.
+    pub async fn get_all_wfo_jobs(&self) -> Result<Vec<WfoJob>, DbError> {
+        let jobs = sqlx::query_as!(
+            WfoJob,
+            "SELECT wfo_job_id, strategy_id, symbol, in_sample_period_months, out_of_sample_period_months, wfo_status, created_at FROM wfo_jobs ORDER BY created_at DESC"
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(jobs)
+    }
+
+    /// Fetches all WFO runs for a specific WFO job.
+    pub async fn get_wfo_runs_for_job(&self, wfo_job_id: Uuid) -> Result<Vec<WfoRun>, DbError> {
+        let runs = sqlx::query_as!(
+            WfoRun,
+            "SELECT wfo_run_id, wfo_job_id, oos_run_id, best_in_sample_parameters, oos_start_date, oos_end_date FROM wfo_runs WHERE wfo_job_id = $1 ORDER BY oos_start_date ASC",
+            wfo_job_id
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(runs)
     }
 }
