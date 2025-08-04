@@ -1,12 +1,12 @@
 use anyhow::Result;
-use api_client::{ApiClient, BinanceClient}; // We need both the trait and the concrete type
+use api_client::{ApiClient, BinanceClient};
 use backtester::Backtester;
 use chrono::{DateTime, NaiveDate, Utc, Duration, Datelike};
 use clap::{Parser, Subcommand};
 use comfy_table::{presets::UTF8_FULL, Cell, ContentArrangement, Table};
 use configuration::{load_config, load_live_config, load_optimizer_config, load_portfolio_config, PortfolioBotConfig, MACrossoverParams, ProbReversionParams, SuperTrendParams};
 use database::{connect, run_migrations, DbRepository};
-use engine::Engine; // Import the Engine
+use engine::Engine;
 use executor::{Portfolio, SimulatedExecutor};
 use futures::future::join_all;
 use indicatif::{ProgressBar, ProgressStyle};
@@ -16,9 +16,10 @@ use risk::SimpleRiskManager;
 use serde_json::{from_value, json};
 use strategies::{create_strategy, StrategyId};
 use std::collections::HashMap;
+use std::net::SocketAddr; // For parsing socket addresses
 use std::ops::Add;
 use std::path::PathBuf;
-use std::sync::Arc; // Import Arc for shared ownership
+use std::sync::Arc;
 use uuid::Uuid;
 use analyzer::Analyzer;
 use wfo::WfoEngine;
@@ -27,19 +28,19 @@ use wfo::WfoEngine;
 async fn main() -> Result<()> {
     dotenvy::dotenv().expect(".env file not found");
 
-    let db_pool = connect().await?;
-    run_migrations(&db_pool).await?;
+    // Note: DB connection is now handled by the commands that need it.
 
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Backfill(args) => handle_backfill(args, db_pool).await?,
-        Commands::SingleRun(args) => handle_single_run(args, db_pool).await?,
-        Commands::Optimize(args) => handle_optimize(args, db_pool).await?,
-        Commands::Analyze(args) => handle_analyze(args, db_pool).await?,
-        Commands::Wfo(args) => handle_wfo(args, db_pool).await?,
-        Commands::PortfolioRun(args) => handle_portfolio_run(args, db_pool).await?,
-        Commands::Run(args) => handle_run(args, db_pool).await?, // New command
+        Commands::Backfill(args) => handle_backfill(args).await?,
+        Commands::SingleRun(args) => handle_single_run(args).await?,
+        Commands::Optimize(args) => handle_optimize(args).await?,
+        Commands::Analyze(args) => handle_analyze(args).await?,
+        Commands::Wfo(args) => handle_wfo(args).await?,
+        Commands::PortfolioRun(args) => handle_portfolio_run(args).await?,
+        Commands::Run(args) => handle_run(args).await?,
+        Commands::Serve(args) => handle_serve(args).await?, // New command
     }
 
     Ok(())
@@ -64,8 +65,9 @@ enum Commands {
     Analyze(AnalyzeArgs),
     Wfo(WfoArgs),
     PortfolioRun(PortfolioRunArgs),
-    /// Run the live trading engine.
     Run(RunArgs),
+    /// Start the web server to serve the API.
+    Serve(ServeArgs),
 }
 
 // ... (Other arg structs are unchanged) ...
@@ -132,11 +134,25 @@ struct RunArgs {
     config: PathBuf,
 }
 
+#[derive(Parser)]
+struct ServeArgs {
+    /// The IP address and port to bind the server to.
+    #[arg(long, short, default_value = "0.0.0.0:3000")]
+    addr: SocketAddr,
+}
+
 // ==============================================================================
 // Command Handlers
 // ==============================================================================
 
-async fn handle_run(args: RunArgs, db_pool: sqlx::PgPool) -> Result<()> {
+/// Handler for the `serve` command.
+async fn handle_serve(args: ServeArgs) -> Result<()> {
+    // We call the library function from our `web-server` crate.
+    // Note: We need to modify the `run_server` function to accept the address.
+    web_server::run_server(args.addr).await
+}
+
+async fn handle_run(args: RunArgs) -> Result<()> {
     // 1. Load Configurations
     let base_config = load_config(None)?;
     let live_config = load_live_config(&args.config)?;
@@ -151,6 +167,8 @@ async fn handle_run(args: RunArgs, db_pool: sqlx::PgPool) -> Result<()> {
     // 3. Instantiate Shared Components
     // We use Arc to allow shared ownership across async tasks.
     let api_client = Arc::new(BinanceClient::new(args.live, &base_config.api));
+    let db_pool = connect().await?;
+    run_migrations(&db_pool).await?;
     let db_repo = DbRepository::new(db_pool);
     let _risk_manager = Arc::new(SimpleRiskManager::new(base_config.risk_management.clone())?);
 
@@ -169,14 +187,76 @@ async fn handle_run(args: RunArgs, db_pool: sqlx::PgPool) -> Result<()> {
 }
 
 
-// ... (all other handler functions are unchanged) ...
-async fn handle_portfolio_run(args: PortfolioRunArgs, db_pool: sqlx::PgPool) -> Result<()> {
+// ... (all other handler functions now need to initialize their own DB connection) ...
+
+// Example modification for one handler:
+async fn handle_backfill(args: BackfillArgs) -> Result<()> {
+    let db_pool = connect().await?;
+    run_migrations(&db_pool).await?;
+    let db_repo = DbRepository::new(db_pool);
+    // ... rest of the function ...
+    println!(
+        "Starting backfill for {} on interval {} from {} to {}",
+        args.symbol, args.from, args.interval, args.to
+    );
+
+    let api_client = BinanceClient::new(false, &load_config(None)?.api);
+
+    let date_ranges = generate_monthly_ranges(args.from, args.to);
+    
+    let progress_bar = ProgressBar::new(date_ranges.len() as u64);
+    progress_bar.set_style(
+        ProgressStyle::default_bar()
+            .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({eta}) {msg}")?
+            .progress_chars("#>-"),
+    );
+
+    let tasks: Vec<_> = date_ranges
+        .into_iter()
+        .map(|(start, end)| {
+            let api_client_clone = api_client.clone();
+            let db_repo_clone = db_repo.clone();
+            let symbol = args.symbol.clone();
+            let interval = args.interval.clone();
+            let pb_clone = progress_bar.clone();
+
+            tokio::spawn(async move {
+                pb_clone.set_message(format!("Fetching {}...", start.format("%Y-%m")));
+                let klines = api_client_clone.fetch_klines(&symbol, &interval, start, end).await?;
+                
+                for kline in klines {
+                    db_repo_clone.save_kline(&symbol, &kline).await?;
+                }
+                
+                pb_clone.inc(1);
+                pb_clone.set_message(format!("Done {}!", start.format("%Y-%m")));
+                Ok::<(), anyhow::Error>(())
+            })
+        })
+        .collect();
+
+    let results = join_all(tasks).await;
+
+    progress_bar.finish_with_message("Backfill complete!");
+
+    for result in results {
+        if let Err(e) = result {
+            eprintln!("A task failed: {}", e);
+        }
+    }
+
+    Ok(())
+}
+
+async fn handle_portfolio_run(args: PortfolioRunArgs) -> Result<()> {
     println!("---===[ Starting Portfolio-Level Backtest ]===---");
 
     let base_config = load_config(None)?;
     let portfolio_config = load_portfolio_config(&args.portfolio)?;
     println!("Loaded portfolio definition with {} bots.", portfolio_config.bots.len());
 
+    let db_pool = connect().await?;
+    run_migrations(&db_pool).await?;
     let db_repo = DbRepository::new(db_pool);
     let analytics_engine = analytics::AnalyticsEngine::new();
     let portfolio = Portfolio::new(base_config.backtest.initial_capital);
@@ -242,7 +322,7 @@ fn create_strategy_from_portfolio_config(
 
     Ok(create_strategy(bot_config.strategy_id, &temp_config, &bot_config.symbol)?)
 }
-async fn handle_wfo(args: WfoArgs, db_pool: sqlx::PgPool) -> Result<()> {
+async fn handle_wfo(args: WfoArgs) -> Result<()> {
     println!("---===[ Starting Walk-Forward Optimization Job ]===---");
 
     let base_config = load_config(None)?;
@@ -255,6 +335,8 @@ async fn handle_wfo(args: WfoArgs, db_pool: sqlx::PgPool) -> Result<()> {
     let start_date = args.from.unwrap_or(base_config.backtest.start_date);
     let end_date = args.to.unwrap_or(base_config.backtest.end_date);
     
+    let db_pool = connect().await?;
+    run_migrations(&db_pool).await?;
     let db_repo = DbRepository::new(db_pool);
     let wfo_engine = WfoEngine::new(optimizer_config, base_config, db_repo);
     
@@ -265,10 +347,12 @@ async fn handle_wfo(args: WfoArgs, db_pool: sqlx::PgPool) -> Result<()> {
 
     Ok(())
 }
-async fn handle_analyze(args: AnalyzeArgs, db_pool: sqlx::PgPool) -> Result<()> {
+async fn handle_analyze(args: AnalyzeArgs) -> Result<()> {
     println!("---===[ Analyzing Optimization Job: {} ]===---", args.job_id);
 
     let optimizer_config = load_optimizer_config(&args.config)?;
+    let db_pool = connect().await?;
+    run_migrations(&db_pool).await?;
     let db_repo = DbRepository::new(db_pool);
     let analyzer = Analyzer::new(optimizer_config.analysis);
 
@@ -303,7 +387,7 @@ async fn handle_analyze(args: AnalyzeArgs, db_pool: sqlx::PgPool) -> Result<()> 
     println!("{table}");
     Ok(())
 }
-async fn handle_optimize(args: OptimizeArgs, db_pool: sqlx::PgPool) -> Result<()> {
+async fn handle_optimize(args: OptimizeArgs) -> Result<()> {
     println!("---===[ Starting Optimization Job ]===---");
 
     println!("Loading base configuration from config.toml...");
@@ -312,6 +396,8 @@ async fn handle_optimize(args: OptimizeArgs, db_pool: sqlx::PgPool) -> Result<()
     println!("Loading optimization job from: {:?}", &args.config);
     let optimizer_config = load_optimizer_config(&args.config)?;
 
+    let db_pool = connect().await?;
+    run_migrations(&db_pool).await?;
     let db_repo = DbRepository::new(db_pool);
 
     let optimizer = Optimizer::new(optimizer_config, base_config, db_repo);
@@ -321,8 +407,10 @@ async fn handle_optimize(args: OptimizeArgs, db_pool: sqlx::PgPool) -> Result<()
     println!("\nOptimization process finished.");
     Ok(())
 }
-async fn handle_single_run(args: SingleRunArgs, db_pool: sqlx::PgPool) -> Result<()> {
+async fn handle_single_run(args: SingleRunArgs) -> Result<()> {
     let config = load_config(None)?;
+    let db_pool = connect().await?;
+    run_migrations(&db_pool).await?;
     let db_repo = DbRepository::new(db_pool);
 
     println!("---===[ Starting Single Backtest Run ]===---");
@@ -395,61 +483,7 @@ async fn handle_single_run(args: SingleRunArgs, db_pool: sqlx::PgPool) -> Result
 
     Ok(())
 }
-async fn handle_backfill(args: BackfillArgs, db_pool: sqlx::PgPool) -> Result<()> {
-    println!(
-        "Starting backfill for {} on interval {} from {} to {}",
-        args.symbol, args.from, args.interval, args.to
-    );
 
-    let db_repo = DbRepository::new(db_pool);
-    let config = load_config(None)?;
-    let _api_client = BinanceClient::new(false, &config.api);
-
-    let date_ranges = generate_monthly_ranges(args.from, args.to);
-    
-    let progress_bar = ProgressBar::new(date_ranges.len() as u64);
-    progress_bar.set_style(
-        ProgressStyle::default_bar()
-            .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({eta}) {msg}")?
-            .progress_chars("#>-"),
-    );
-
-    let tasks: Vec<_> = date_ranges
-        .into_iter()
-        .map(|(start, end)| {
-            let api_client_clone = BinanceClient::new(false, &config.api);
-            let db_repo_clone = db_repo.clone();
-            let symbol = args.symbol.clone();
-            let interval = args.interval.clone();
-            let pb_clone = progress_bar.clone();
-
-            tokio::spawn(async move {
-                pb_clone.set_message(format!("Fetching {}...", start.format("%Y-%m")));
-                let klines = api_client_clone.fetch_klines(&symbol, &interval, start, end).await?;
-                
-                for kline in klines {
-                    db_repo_clone.save_kline(&symbol, &kline).await?;
-                }
-                
-                pb_clone.inc(1);
-                pb_clone.set_message(format!("Done {}!", start.format("%Y-%m")));
-                Ok::<(), anyhow::Error>(())
-            })
-        })
-        .collect();
-
-    let results = join_all(tasks).await;
-
-    progress_bar.finish_with_message("Backfill complete!");
-
-    for result in results {
-        if let Err(e) = result {
-            eprintln!("A task failed: {}", e);
-        }
-    }
-
-    Ok(())
-}
 
 fn generate_monthly_ranges(
     mut from: NaiveDate,

@@ -29,4 +29,4 @@ pub mod repository;
 // Re-export the key components to create a clean, public-facing API.
 pub use connection::{connect, run_migrations};
 pub use error::DbError;
-pub use repository::{DbBacktestRun, DbRepository, FullReport, WfoJob, WfoRun};
+pub use repository::{DbBacktestRun, DbOptimizationJob, DbRepository, FullReport, WfoJob, WfoRun};

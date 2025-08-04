@@ -25,6 +25,14 @@ pub struct DbBacktestRun {
     pub parameters: JsonValue,
     pub run_status: String,
 }
+#[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
+pub struct DbOptimizationJob {
+    pub job_id: Uuid,
+    pub strategy_id: String,
+    pub symbol: String,
+    pub job_status: String,
+    pub created_at: DateTime<Utc>,
+}
 /// Represents a row from the `wfo_jobs` table.
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
 pub struct WfoJob {
@@ -82,6 +90,63 @@ impl DbRepository {
         Self { pool }
     }
 
+    /// Fetches all optimization jobs from the database.
+    /// In a real app, this would support pagination with OFFSET and LIMIT.
+    pub async fn get_all_optimization_jobs(&self) -> Result<Vec<DbOptimizationJob>, DbError> {
+        let jobs = sqlx::query_as!(
+            DbOptimizationJob,
+            "SELECT job_id, strategy_id, symbol, job_status, created_at FROM optimization_jobs ORDER BY created_at DESC"
+        ).fetch_all(&self.pool).await?;
+        Ok(jobs)
+    }
+    /// Fetches all backtest runs that were executed as 'Single Run' jobs.
+    /// This joins with the performance report to provide a useful summary.
+    pub async fn get_all_single_runs(&self) -> Result<Vec<FullReport>, DbError> {
+        let reports = sqlx::query_as!(
+            FullReport,
+            r#"
+            SELECT
+                br.run_id as "run_id!", br.job_id as "job_id!", br.parameters as "parameters!", pr.report_id as "report_id?", pr.total_net_profit as "total_net_profit?", pr.gross_profit as "gross_profit?", pr.gross_loss as "gross_loss?", pr.profit_factor as "profit_factor?", pr.total_return_pct as "total_return_pct?", pr.max_drawdown as "max_drawdown?", pr.max_drawdown_pct as "max_drawdown_pct?", pr.sharpe_ratio as "sharpe_ratio?", pr.calmar_ratio as "calmar_ratio?", pr.total_trades as "total_trades?", pr.winning_trades as "winning_trades?", pr.losing_trades as "losing_trades?", pr.win_rate_pct as "win_rate_pct?", pr.average_win as "average_win?", pr.average_loss as "average_loss?", pr.payoff_ratio as "payoff_ratio?", pr.average_holding_period as "average_holding_period?"
+            FROM
+                performance_reports AS pr
+            JOIN
+                backtest_runs AS br ON pr.run_id = br.run_id
+            JOIN
+                optimization_jobs AS oj ON br.job_id = oj.job_id
+            WHERE
+                oj.job_status = 'Single Run'
+            ORDER BY
+                oj.created_at DESC
+            "#
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        Ok(reports)
+    }
+
+    /// Fetches the full, joined report for a single backtest run ID.
+    pub async fn get_full_report_for_run(&self, run_id: Uuid) -> Result<FullReport, DbError> {
+        let report = sqlx::query_as!(
+            FullReport,
+            r#"
+            SELECT
+                br.run_id as "run_id!", br.job_id as "job_id!", br.parameters as "parameters!", pr.report_id as "report_id?", pr.total_net_profit as "total_net_profit?", pr.gross_profit as "gross_profit?", pr.gross_loss as "gross_loss?", pr.profit_factor as "profit_factor?", pr.total_return_pct as "total_return_pct?", pr.max_drawdown as "max_drawdown?", pr.max_drawdown_pct as "max_drawdown_pct?", pr.sharpe_ratio as "sharpe_ratio?", pr.calmar_ratio as "calmar_ratio?", pr.total_trades as "total_trades?", pr.winning_trades as "winning_trades?", pr.losing_trades as "losing_trades?", pr.win_rate_pct as "win_rate_pct?", pr.average_win as "average_win?", pr.average_loss as "average_loss?", pr.payoff_ratio as "payoff_ratio?", pr.average_holding_period as "average_holding_period?"
+            FROM
+                performance_reports AS pr
+            JOIN
+                backtest_runs AS br ON pr.run_id = br.run_id
+            WHERE
+                br.run_id = $1
+            "#,
+            run_id
+        )
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| if let sqlx::Error::RowNotFound = e { DbError::NotFound } else { e.into() })?;
+        
+        Ok(report)
+    }
     /// Fetches all klines for a given symbol and interval within a date range.
     pub async fn get_klines_by_date_range(
         &self,
@@ -292,27 +357,7 @@ impl DbRepository {
             FullReport,
             r#"
             SELECT
-                br.run_id as "run_id!",
-                br.job_id as "job_id!",
-                br.parameters as "parameters!",
-                pr.report_id as "report_id?",
-                pr.total_net_profit as "total_net_profit?",
-                pr.gross_profit as "gross_profit?",
-                pr.gross_loss as "gross_loss?",
-                pr.profit_factor as "profit_factor?",
-                pr.total_return_pct as "total_return_pct?",
-                pr.max_drawdown as "max_drawdown?",
-                pr.max_drawdown_pct as "max_drawdown_pct?",
-                pr.sharpe_ratio as "sharpe_ratio?",
-                pr.calmar_ratio as "calmar_ratio?",
-                pr.total_trades as "total_trades?",
-                pr.winning_trades as "winning_trades?",
-                pr.losing_trades as "losing_trades?",
-                pr.win_rate_pct as "win_rate_pct?",
-                pr.average_win as "average_win?",
-                pr.average_loss as "average_loss?",
-                pr.payoff_ratio as "payoff_ratio?",
-                pr.average_holding_period as "average_holding_period?"
+                br.run_id as "run_id!", br.job_id as "job_id!", br.parameters as "parameters!", pr.report_id as "report_id?", pr.total_net_profit as "total_net_profit?", pr.gross_profit as "gross_profit?", pr.gross_loss as "gross_loss?", pr.profit_factor as "profit_factor?", pr.total_return_pct as "total_return_pct?", pr.max_drawdown as "max_drawdown?", pr.max_drawdown_pct as "max_drawdown_pct?", pr.sharpe_ratio as "sharpe_ratio?", pr.calmar_ratio as "calmar_ratio?", pr.total_trades as "total_trades?", pr.winning_trades as "winning_trades?", pr.losing_trades as "losing_trades?", pr.win_rate_pct as "win_rate_pct?", pr.average_win as "average_win?", pr.average_loss as "average_loss?", pr.payoff_ratio as "payoff_ratio?", pr.average_holding_period as "average_holding_period?"
             FROM
                 performance_reports AS pr
             JOIN

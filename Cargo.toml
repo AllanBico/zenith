@@ -42,6 +42,7 @@ portfolio-backtester = { path = "crates/portfolio-backtester" }
 risk = { path = "crates/risk" }
 strategies = { path = "crates/strategies" }
 wfo = { path = "crates/wfo" }
+web-server = { path = "crates/web-server" }
 
 # ==============================================================================
 # External Dependencies
