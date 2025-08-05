@@ -71,7 +71,7 @@ impl LiveConnector {
         interval: &str,
     ) -> Result<mpsc::Receiver<(String, Kline)>, ApiError> {
         // 1. Create the MPSC channel for communication.
-        let (tx, rx) = mpsc::channel(1024);
+        let (tx, rx) = mpsc::channel(10000); // Increased capacity to prevent blocking
 
         // 2. Construct the full stream URL.
         let streams = symbols
@@ -138,7 +138,8 @@ impl LiveConnector {
                                                         Ok(_) => {
                                                             tracing::debug!("Successfully sent kline for symbol: {}", wrapper.data.symbol);
                                                         }
-                                                        Err(_) => {
+                                                        Err(e) => {
+                                                            tracing::error!("Failed to send kline for symbol {}: {:?}. Channel may be full or receiver dropped.", wrapper.data.symbol, e);
                                                             tracing::error!("Receiver dropped. Closing WebSocket connection.");
                                                             return;
                                                         }

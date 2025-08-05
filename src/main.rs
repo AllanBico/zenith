@@ -8,6 +8,7 @@ use configuration::{load_config, load_live_config, load_optimizer_config, load_p
 use database::{connect, run_migrations, DbRepository};
 use engine::LiveEngine;
 use executor::{Portfolio, SimulatedExecutor, LiveExecutor};
+use events::WsMessage;
 use futures::future::join_all;
 use indicatif::{ProgressBar, ProgressStyle};
 use optimizer::Optimizer;
@@ -20,6 +21,7 @@ use std::net::SocketAddr; // For parsing socket addresses
 use std::ops::Add;
 use std::path::PathBuf;
 use std::sync::Arc;
+use tokio::sync::broadcast;
 use uuid::Uuid;
 use tracing;
 use analyzer::Analyzer;
@@ -147,7 +149,7 @@ struct RunArgs {
 #[derive(Parser)]
 struct ServeArgs {
     /// The IP address and port to bind the server to.
-    #[arg(long, short, default_value = "0.0.0.0:3000")]
+    #[arg(long, short, default_value = "0.0.0.0:8080")]
     addr: SocketAddr,
 }
 
@@ -157,9 +159,16 @@ struct ServeArgs {
 
 /// Handler for the `serve` command.
 async fn handle_serve(args: ServeArgs) -> Result<()> {
+    // Initialize database connection
+    let db_pool = connect().await?;
+    run_migrations(&db_pool).await?;
+    let db_repo = DbRepository::new(db_pool);
+    
+    // Create broadcast channel for WebSocket events
+    let (event_tx, _) = broadcast::channel::<WsMessage>(10000); // Much larger capacity for kline data
+    
     // We call the library function from our `web-server` crate.
-    // Note: We need to modify the `run_server` function to accept the address.
-    web_server::run_server(args.addr).await
+    web_server::run_server(args.addr, db_repo, event_tx).await
 }
 
 async fn handle_run(args: RunArgs) -> Result<()> {
@@ -226,6 +235,21 @@ async fn handle_run(args: RunArgs) -> Result<()> {
     // The engine doesn't know or care which executor it was given.
     let risk_manager = Arc::new(SimpleRiskManager::new(base_config.risk_management.clone())?);
 
+    // Create broadcast channel for WebSocket events
+    let (event_tx, _) = broadcast::channel::<WsMessage>(10000); // Much larger capacity for kline data
+
+    // Start the web server in a separate task
+    let web_server_event_tx = event_tx.clone();
+    let web_server_db_repo = db_repo.clone();
+    let web_server_addr = SocketAddr::from(([0, 0, 0, 0], 8080));
+    
+    tokio::spawn(async move {
+        tracing::info!("Starting web server on {}", web_server_addr);
+        if let Err(e) = web_server::run_server(web_server_addr, web_server_db_repo, web_server_event_tx).await {
+            tracing::error!("Web server error: {:?}", e);
+        }
+    });
+
     // This is the missing piece from the next task, we add it here now.
     let mut engine = LiveEngine::new(
         live_config,
@@ -234,6 +258,7 @@ async fn handle_run(args: RunArgs) -> Result<()> {
         executor, // Pass in the generic executor
         db_repo,
         risk_manager,
+        event_tx,
     );
 
     engine.run().await?;

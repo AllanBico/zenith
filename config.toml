@@ -21,9 +21,9 @@ secret = "9ae595bb00812a75a3f1f43932599eba8177d668690a664eaea5c0f0071b9431"
 
 # Production API keys (for live trading)
 [api.production]
-binance_api_key = "31fbf16926ce01bfbf2dad27e1c087fc89749d9c1ea8d5c45db3c4c99620c920"
-key = "31fbf16926ce01bfbf2dad27e1c087fc89749d9c1ea8d5c45db3c4c99620c920"
-secret = "9ae595bb00812a75a3f1f43932599eba8177d668690a664eaea5c0f0071b9431"
+binance_api_key = "ROHyz8JPmZEF69VFFlGoaJThuRACq13aNSSvDaF4tAAyz45XnDtHbJQyZIbakLMA"
+key = "31fbf16926ce01bfbf2dad27ROHyz8JPmZEF69VFFlGoaJThuRACq13aNSSvDaF4tAAyz45XnDtHbJQyZIbakLMAe1c087fc89749d9c1ea8d5c45db3c4c99620c920"
+secret = "ymgRxY9pYXRtbDjwqtI2Fo1fK8CtctBpx5kjNNjxv1uIrmGcM6qgu7A91vgfpAaY"
 
 # ------------------------------------------------------------------------------
 # Default Backtest Configuration
@@ -34,7 +34,7 @@ secret = "9ae595bb00812a75a3f1f43932599eba8177d668690a664eaea5c0f0071b9431"
 [backtest]
 strategy_id = "ProbReversion"
 symbol = "BTCUSDT"
-interval = "15m"
+interval = "1m"
 initial_capital = 1000.0
 start_date = "2025-01-01"
 end_date = "2025-06-30"
@@ -59,12 +59,12 @@ slippage_pct = 0.1
 # ------------------------------------------------------------------------------
 [risk_management]
 # The fraction of the total portfolio equity to risk per trade.
-# 0.005 means 0.5% of equity will be at risk on any given trade.
-risk_per_trade_pct = 0.005
+# 0.05 means 5% of equity will be at risk on any given trade.
+risk_per_trade_pct = 0.05
 
 # The distance to the stop-loss, used for calculating position size.
-# 0.01 means the stop-loss is assumed to be 1% away from the entry price.
-stop_loss_pct = 0.2
+# 0.02 means the stop-loss is assumed to be 2% away from the entry price.
+stop_loss_pct = 0.02
 
 # ------------------------------------------------------------------------------
 # Strategy Parameters
@@ -135,4 +135,4 @@ targets = true
 # Custom log level overrides for specific modules.
 # Format: "module_name=level"
 # Example: ["zenith::api_client=debug", "zenith::engine=info"]
-overrides = ["sqlx=warn", "zenith::engine=debug"]
+overrides = ["sqlx=warn", "zenith::engine=debug", "zenith::risk=debug"]

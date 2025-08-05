@@ -122,7 +122,7 @@ out_of_sample_weeks = 2
 
 After optimization completes:
 1. Run `cargo run -- analyze <job_id>` to see results
-2. View results in the React UI at `http://localhost:3000`
+2. View results in the React UI at `http://localhost:8080`
 3. Export results for further analysis
 
 ## Tips

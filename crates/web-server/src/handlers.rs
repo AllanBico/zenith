@@ -2,6 +2,7 @@ use crate::{error::AppError, AppState};
 use analyzer::{Analyzer, RankedReport};
 use database::repository::BacktestRunDetails;
 use tracing;
+use chrono::Utc;
 use axum::{
     extract::{
         ws::{Message, WebSocket, WebSocketUpgrade},
@@ -14,6 +15,7 @@ use axum::{
 };
 use configuration::load_optimizer_config;
 use database::{DbOptimizationJob, FullReport, WfoJob, WfoRun};
+use futures_util::StreamExt;
 
 use serde::Deserialize;
 use std::path::PathBuf;
@@ -103,35 +105,112 @@ pub async fn get_wfo_job_runs(
     let runs = state.db_repo.get_wfo_runs_for_job(wfo_job_id).await?;
     Ok(Json(runs))
 }
-/// # GET /ws (FIXED)
-/// The WebSocket endpoint. Note the corrected argument order.
+/// # GET /ws
+/// The WebSocket endpoint for real-time communication.
 pub async fn websocket_handler(
-    State(state): State<Arc<AppState>>, // State must come before WebSocketUpgrade
+    State(state): State<Arc<AppState>>,
     ws: WebSocketUpgrade,
 ) -> impl IntoResponse {
     ws.on_upgrade(move |socket| handle_socket(socket, state))
 }
 
-async fn handle_socket(mut socket: WebSocket, _state: Arc<AppState>) {
+/// The actual logic for handling a single WebSocket connection.
+async fn handle_socket(mut socket: WebSocket, state: Arc<AppState>) {
     tracing::info!("[WS] New client connected.");
-    if socket.send(Message::Text("Welcome!".to_string())).await.is_err() {
-        return;
+
+    // 1. Subscribe this client to the broadcast channel.
+    let mut event_rx = state.event_tx.subscribe();
+
+    // 2. Send a test message to confirm connection
+    let test_msg = events::WsMessage::Connected;
+    let test_payload = serde_json::to_string(&test_msg).unwrap();
+    if socket.send(Message::Text(test_payload)).await.is_err() {
+        tracing::warn!("[WS] Failed to send test message to new client.");
+        return; // Client disconnected immediately
     }
-    while let Some(msg) = socket.recv().await {
-        match msg {
-            Ok(Message::Text(t)) => {
-                if socket.send(Message::Text(format!("You sent: {}", t))).await.is_err() { break; }
-            }
-            Ok(Message::Close(_)) => {
-                tracing::info!("[WS] Client disconnected.");
-                break;
-            }
-            Err(e) => {
-                tracing::error!(error = %e, "[WS] Error.");
-                break;
-            }
-            _ => {}
+    tracing::info!("[WS] Sent test message to new client");
+
+    // 3. Implement the "Replay Cache" - send the last known state immediately.
+    let initial_state = { // Scoped lock
+        state.portfolio_state_cache.lock().await.clone()
+    };
+    if let Some(portfolio_state) = initial_state {
+        let msg = events::WsMessage::PortfolioState(portfolio_state);
+        let payload = serde_json::to_string(&msg).unwrap();
+        if socket.send(Message::Text(payload)).await.is_err() {
+            tracing::warn!("[WS] Failed to send initial state to new client.");
+            return; // Client disconnected immediately
         }
     }
+
+    // 3. The main concurrent loop.
+    // This loop listens for messages from both the client and the broadcast channel.
+    let mut heartbeat_interval = tokio::time::interval(tokio::time::Duration::from_secs(30));
+    loop {
+        tokio::select! {
+            // Send heartbeat every 30 seconds
+            _ = heartbeat_interval.tick() => {
+                let heartbeat_msg = events::WsMessage::Log(events::LogMessage {
+                    timestamp: chrono::Utc::now(),
+                    level: events::LogLevel::Info,
+                    message: "WebSocket heartbeat".to_string(),
+                });
+                let payload = serde_json::to_string(&heartbeat_msg).unwrap();
+                if socket.send(Message::Text(payload)).await.is_err() {
+                    tracing::error!("[WS] Failed to send heartbeat. Client may have disconnected.");
+                    break;
+                }
+                tracing::debug!("[WS] Sent heartbeat to client");
+            }
+            // A message was received from the broadcast channel (i.e., from the LiveEngine).
+            msg = event_rx.recv() => {
+                match msg {
+                    Ok(msg) => {
+                        tracing::info!("[WS] Received message from broadcast channel: {:?}", msg);
+                        let payload = serde_json::to_string(&msg).unwrap();
+                        tracing::debug!("[WS] Sending payload to client: {}", payload);
+                        match socket.send(Message::Text(payload)).await {
+                            Ok(_) => {
+                                tracing::debug!("[WS] Successfully sent message to client");
+                            }
+                            Err(e) => {
+                                tracing::error!("[WS] Failed to send message to client: {:?}", e);
+                                tracing::info!("[WS] Client disconnected. Breaking send loop.");
+                                break;
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        tracing::error!("[WS] Broadcast channel error: {:?}", e);
+                        tracing::info!("[WS] Breaking send loop due to broadcast channel error.");
+                        break;
+                    }
+                }
+            }
+
+            // A message was received from the client (e.g., ping, close).
+            Some(Ok(msg)) = socket.next() => {
+                match msg {
+                    Message::Close(_) => {
+                        tracing::info!("[WS] Client sent close frame.");
+                        break;
+                    }
+                    Message::Ping(_) => {
+                        // The client is checking if we're alive.
+                        // `axum` handles sending the `Pong` frame automatically.
+                    }
+                    _ => {
+                        // We don't process other messages from the client.
+                    }
+                }
+            }
+            
+            // If either the broadcast channel lags or the client disconnects, we exit.
+            else => {
+                break;
+            }
+        }
+    }
+
     tracing::info!("[WS] Connection closed.");
 }

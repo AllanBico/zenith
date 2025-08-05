@@ -5,13 +5,15 @@ use configuration::{Config, LiveConfig};
 use database::DbRepository;
 use executor::{Executor, Portfolio}; // Import the generic Executor trait
 use risk::RiskManager;
+use rust_decimal_macros::dec;
 use std::collections::HashMap;
 use std::sync::Arc;
 use strategies::Strategy;
 use tokio::sync::Mutex;
 use uuid::Uuid;
 use chrono::Utc;
-use events;
+use events::{LogMessage, LogLevel, WsMessage, KlineData};
+use tokio::sync::broadcast;
 
 pub mod error;
 pub mod reconciler;
@@ -60,6 +62,9 @@ pub struct LiveEngine {
     portfolio: Arc<Mutex<Portfolio>>,
     risk_manager: Arc<dyn RiskManager>,
 
+    // --- NEW: The event broadcaster ---
+    event_tx: broadcast::Sender<WsMessage>,
+
     // --- Bot Management ---
     bots: HashMap<String, Bot>,
 }
@@ -74,6 +79,7 @@ impl LiveEngine {
         executor: Arc<dyn Executor>, // <-- NEW: Accepts a generic executor
         db_repo: DbRepository,
         risk_manager: Arc<dyn RiskManager>,
+        event_tx: broadcast::Sender<WsMessage>, // <-- ADD THIS
     ) -> Self {
         let portfolio = Arc::new(Mutex::new(Portfolio::new(
             base_config.backtest.initial_capital,
@@ -87,31 +93,63 @@ impl LiveEngine {
             db_repo,
             portfolio,
             risk_manager,
+            event_tx, // <-- STORE IT
             bots: HashMap::new(),
         }
     }
 
-    /// Initializes the engine to a ready state for live trading.
-    /// This is the primary setup function that must be called before `run`.
-    pub async fn init(&mut self) -> Result<(), EngineError> {
-        tracing::info!("Initializing trading engine...");
-
-        // 1. Synchronize Portfolio State with the Exchange
-        self.sync_portfolio_state().await?;
-        tracing::info!("Portfolio state synchronized with exchange.");
-
-        // 2. Populate Bots from Configuration
-        self.populate_bots()?;
-        tracing::info!("Loaded {} active bots.", self.bots.len());
+    /// A helper method to both log via tracing and broadcast a WsMessage::Log.
+    fn log(&self, level: LogLevel, message: &str) {
+        let msg = message.to_string();
+        match level {
+            LogLevel::Info => tracing::info!("{}", msg),
+            LogLevel::Warn => tracing::warn!("{}", msg),
+            LogLevel::Error => tracing::error!("{}", msg),
+        }
         
-        // 3. Set Leverage for all active symbols
+        let log_msg = WsMessage::Log(LogMessage {
+            timestamp: Utc::now(),
+            level,
+            message: msg,
+        });
+
+        // We don't care if there are no subscribers, so we ignore the error.
+        let _ = self.event_tx.send(log_msg);
+    }
+    
+    /// Helper to broadcast the current portfolio state.
+    async fn broadcast_portfolio_state(&self) -> Result<(), EngineError> {
+        let portfolio = self.portfolio.lock().await;
+        // In a real system, we'd need a map of all live mark prices.
+        // For now, we'll send a simplified state.
+        let state_msg = WsMessage::PortfolioState(events::PortfolioState {
+            timestamp: Utc::now(),
+            cash: portfolio.cash,
+            total_value: portfolio.cash, // Simplified for now
+            positions: portfolio.positions.values().cloned().collect(),
+        });
+        
+        if self.event_tx.send(state_msg).is_err() {
+             // Optional: log if there are no listeners
+        }
+        Ok(())
+    }
+
+    /// Initializes the engine to a ready state for live trading.
+    pub async fn init(&mut self) -> Result<(), EngineError> {
+        self.log(LogLevel::Info, "Initializing trading engine...");
+        self.sync_portfolio_state().await?;
+        self.log(LogLevel::Info, "Portfolio state synchronized with exchange.");
+        self.populate_bots()?;
+        self.log(LogLevel::Info, &format!("Loaded {} active bots.", self.bots.len()));
+        
         for symbol in self.bots.keys() {
-            tracing::info!("Setting leverage for {}...", symbol);
-            // We'll use a hardcoded leverage for now. This could come from config later.
+            self.log(LogLevel::Info, &format!("Setting leverage for {}...", symbol));
             self.api_client.set_leverage(symbol, 10).await?;
         }
         
-        tracing::info!("Engine initialization complete.");
+        self.log(LogLevel::Info, "Engine initialization complete.");
+        self.broadcast_portfolio_state().await?; // Broadcast initial state
         Ok(())
     }
 
@@ -128,11 +166,14 @@ impl LiveEngine {
         // Find the USDT balance to set our cash value.
         if let Some(usdt_balance) = balances.iter().find(|b| b.asset == "USDT") {
             portfolio.cash = usdt_balance.available_balance;
+            tracing::info!("[ENGINE] Found USDT balance: {}", usdt_balance.available_balance);
         } else {
             // Handle case where there is no USDT, for now, we'll just log it.
             tracing::warn!("No USDT balance found in account.");
             portfolio.cash = "0".parse().unwrap();
         }
+        
+        tracing::info!("[ENGINE] Portfolio cash set to: {}", portfolio.cash);
 
         // Clear any existing positions and reconstruct from the exchange's data.
         portfolio.positions.clear();
@@ -195,12 +236,11 @@ impl LiveEngine {
 
         let symbols: Vec<String> = self.bots.keys().cloned().collect();
         if symbols.is_empty() {
-            tracing::warn!("No bots enabled in live.toml. Exiting.");
+            self.log(LogLevel::Warn, "No bots enabled in live.toml. Exiting.");
             return Ok(());
         }
-        let interval = &self.live_config.interval;
+        let interval = &self.base_config.backtest.interval;
         
-        // The `live_mode` flag is now derived from the config, not passed in.
         let is_live = self.live_config.live_trading_enabled;
         let connector = LiveConnector::new(is_live);
         let mut kline_rx = connector.subscribe_to_klines(&symbols, interval)?;
@@ -209,53 +249,136 @@ impl LiveEngine {
             Arc::clone(&self.portfolio),
             Arc::clone(&self.api_client),
             self.db_repo.clone(),
+            self.event_tx.clone(), // Give the reconciler the sender
         );
         tokio::spawn(reconciler.start());
         
-        tracing::info!("Engine is running. Subscribed to {} kline streams. Waiting for market data...", symbols.len());
+        self.log(LogLevel::Info, &format!("Engine is running. Subscribed to {} kline streams.", symbols.len()));
 
+        tracing::info!("[ENGINE] Starting kline processing loop");
         while let Some((symbol, kline)) = kline_rx.recv().await {
-            if let Err(e) = self.process_kline(&symbol, &kline).await {
-                tracing::error!(error = ?e, "Failed to process kline.");
+            let start_time = std::time::Instant::now();
+            tracing::info!("[ENGINE] Received kline for {}: close price {}", symbol, kline.close);
+            match self.process_kline(&symbol, &kline).await {
+                Ok(_) => {
+                    let duration = start_time.elapsed();
+                    tracing::info!("[ENGINE] Successfully processed kline for {} in {:?}", symbol, duration);
+                }
+                Err(e) => {
+                    let duration = start_time.elapsed();
+                    tracing::error!("[ENGINE] Failed to process kline for {} in {:?}: {:?}", symbol, duration, e);
+                    self.log(LogLevel::Error, &format!("Failed to process kline: {:?}", e));
+                }
             }
         }
         
-        tracing::error!("WebSocket stream ended unexpectedly.");
+        tracing::error!("[ENGINE] Kline channel closed - no more klines will be received");
+        
+        self.log(LogLevel::Error, "WebSocket stream ended unexpectedly.");
         Ok(())
     }
 
     /// The core logic for processing a single market event (Kline).
     async fn process_kline(&mut self, symbol: &str, kline: &core_types::Kline) -> Result<(), EngineError> {
-        let bot = self.bots.get_mut(symbol).ok_or_else(|| EngineError::BotNotFound(symbol.to_string()))?;
-
-        if let Some(signal) = bot.strategy.evaluate(kline)? {
-            tracing::info!("Signal generated for {}: {:?} at price {}", bot.symbol, signal.order_request.side, kline.close);
-
-            let portfolio_guard = self.portfolio.lock().await;
-            let latest_equity = portfolio_guard.calculate_total_equity(&HashMap::from([(bot.symbol.clone(), kline.close)]))?;
-            let portfolio_state = events::PortfolioState {
-                timestamp: Utc::now(),
-                cash: portfolio_guard.cash,
-                total_value: latest_equity,
-                positions: portfolio_guard.positions.values().cloned().collect(),
+        tracing::info!("[ENGINE] Processing kline for {}: broadcast_klines = {}", symbol, self.live_config.broadcast_klines);
+        // Broadcast kline data to WebSocket clients if enabled
+        if self.live_config.broadcast_klines {
+            let kline_data = events::KlineData {
+                symbol: symbol.to_string(),
+                kline: kline.clone(),
             };
-            drop(portfolio_guard);
-
-            let order_request = self.risk_manager.evaluate_signal(&signal, &portfolio_state, kline.close)?;
-            tracing::info!("Risk assessment passed. Final Order: {:?} {} @ Market", order_request.quantity, order_request.symbol);
-
-            // --- THE KEY CHANGE IS HERE ---
-            // We now call the generic `executor`, not the `api_client`.
-            match self.executor.execute(&order_request, kline).await {
-                Ok(execution) => {
-                    tracing::info!("SUCCESS: Execution confirmed: {:?}", execution);
-                    // In a real system, we'd wait for a WebSocket confirmation before updating state.
-                    // For now, we update our local portfolio optimistically.
-                    let mut portfolio = self.portfolio.lock().await;
-                    portfolio.update_with_execution(&execution)?;
+            let msg = events::WsMessage::KlineData(kline_data);
+            tracing::info!("[ENGINE] Broadcasting kline data for {}: {:?}", symbol, msg);
+            match self.event_tx.send(msg) {
+                Ok(_) => {
+                    tracing::info!("[ENGINE] Successfully broadcast kline data for {}", symbol);
                 }
                 Err(e) => {
-                    tracing::error!(symbol = %bot.symbol, error = ?e, "Failed to execute order.");
+                    tracing::error!("[ENGINE] Failed to broadcast kline data for {}: {:?}", symbol, e);
+                    // Check if it's a channel full error
+                    if e.to_string().contains("channel full") {
+                        tracing::error!("[ENGINE] Broadcast channel is full! Consider increasing capacity.");
+                    }
+                }
+            }
+        } else {
+            tracing::debug!("[ENGINE] Kline broadcasting is disabled in config");
+        }
+
+        let bot = self.bots.get_mut(symbol).ok_or_else(|| EngineError::BotNotFound(symbol.to_string()))?;
+
+        if let Some(signal) = bot.strategy.evaluate(&kline)? {
+            let bot_symbol = bot.symbol.clone();
+            let signal_side = signal.order_request.side;
+            let close_price = kline.close;
+            
+            self.log(LogLevel::Info, &format!("Signal generated for {}: {:?} at price {}", bot_symbol, signal_side, close_price));
+            tracing::info!("[ENGINE] About to enter risk management section for {}", bot_symbol);
+
+            let order_request = { // Scoped to release the lock quickly
+                tracing::info!("[ENGINE] About to lock portfolio for {}", bot_symbol);
+                let portfolio_guard = self.portfolio.lock().await;
+                tracing::info!("[ENGINE] Portfolio locked successfully for {}", bot_symbol);
+                // Create a map of all current prices needed for equity calculation
+                let mut market_prices = HashMap::new();
+                market_prices.insert(bot_symbol.clone(), close_price);
+                
+                // Add prices for any other symbols that have positions
+                for (pos_symbol, _) in &portfolio_guard.positions {
+                    if pos_symbol != &bot_symbol {
+                        // For now, we'll use the last known price or a default
+                        // In a real system, you'd fetch current prices for all symbols
+                        market_prices.insert(pos_symbol.clone(), dec!(0)); // Placeholder
+                    }
+                }
+                
+                let latest_equity = portfolio_guard.calculate_total_equity(&market_prices)?;
+                let portfolio_state = events::PortfolioState {
+                    timestamp: Utc::now(),
+                    cash: portfolio_guard.cash,
+                    total_value: latest_equity,
+                    positions: portfolio_guard.positions.values().cloned().collect(),
+                };
+                
+                tracing::info!("[ENGINE] Portfolio state - Cash: {}, Total Value: {}, Positions: {:?}", 
+                    portfolio_state.cash, portfolio_state.total_value, portfolio_state.positions);
+                
+                tracing::info!("[ENGINE] Calling risk manager with signal: {:?}", signal);
+                
+                match self.risk_manager.evaluate_signal(&signal, &portfolio_state, close_price) {
+                    Ok(order) => {
+                        tracing::info!("[ENGINE] Risk manager approved order: {:?}", order);
+                        order
+                    },
+                    Err(e) => {
+                        tracing::error!("[ENGINE] Risk management rejected signal: {:?}", e);
+                        self.log(LogLevel::Warn, &format!("Risk management rejected signal: {:?}", e));
+                        tracing::info!("[ENGINE] Skipping signal due to risk management rejection, but continuing to process klines");
+                        return Ok(()); // Skip this signal but continue processing
+                    }
+                }
+            };
+            self.log(LogLevel::Info, &format!("Risk assessment passed. Final Order: {:?} {} @ Market", order_request.quantity, order_request.symbol));
+
+            match self.executor.execute(&order_request, kline).await {
+                Ok(execution) => {
+                    self.log(LogLevel::Info, &format!("SUCCESS: Execution confirmed for {}: {:?}", execution.symbol, execution.price));
+                    
+                    // Update local portfolio state
+                    {
+                        let mut portfolio = self.portfolio.lock().await;
+                        portfolio.update_with_execution(&execution)?;
+                    } // Portfolio lock is released here
+                    
+                    self.broadcast_portfolio_state().await?; // Broadcast updated state
+                    
+                    // Trigger immediate portfolio sync to ensure our state matches the exchange
+                    tracing::info!("[ENGINE] Triggering immediate portfolio sync after execution");
+                    self.sync_portfolio_state().await?;
+                    self.broadcast_portfolio_state().await?; // Broadcast the synced state
+                }
+                Err(e) => {
+                    self.log(LogLevel::Error, &format!("ERROR: Failed to execute order for {}: {:?}", bot_symbol, e));
                 }
             }
         }

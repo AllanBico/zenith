@@ -7,8 +7,11 @@
 
 # A master safety switch. If this is false, the engine will not place any real trades,
 # regardless of the individual bot settings.
-live_trading_enabled = false
+live_trading_enabled = true
 interval = "1m"
+
+# Enable broadcasting kline data to WebSocket clients
+broadcast_klines = true
 
 # --- Bot 1: A trend-following strategy on Bitcoin ---
 # This bot is currently ACTIVE.
@@ -28,7 +31,17 @@ trend_filter_period = 2
 # start it or subscribe to its data.
 [[bot]]
 enabled = true
-symbol = "ETHUSDT"
+symbol = "XEMUSDT"
+strategy_id = "MACrossover"
+
+[bot.params]
+ma_fast_period = 1
+ma_slow_period = 2
+trend_filter_period = 2
+
+[[bot]]
+enabled = true
+symbol = "LINAUSDT"
 strategy_id = "MACrossover"
 
 [bot.params]

@@ -91,3 +91,52 @@ export interface OptimizationJob {
     oos_start_date: string;
     oos_end_date: string;
   }
+
+
+export type LogLevel = "Info" | "Warn" | "Error";
+
+export interface LogMessage {
+  timestamp: string;
+  level: LogLevel;
+  message: string;
+}
+
+export interface Position {
+  position_id: string;
+  symbol: string;
+  side: "Buy" | "Sell";
+  quantity: string;
+  entry_price: string;
+  unrealized_pnl: string;
+  last_updated: string;
+}
+
+export interface PortfolioState {
+  timestamp: string;
+  cash: string;
+  total_value: string;
+  positions: Position[];
+}
+
+export interface Kline {
+  open_time: string;
+  open: string;
+  high: string;
+  low: string;
+  close: string;
+  volume: string;
+  close_time: string;
+  interval: string;
+}
+
+export interface KlineData {
+  symbol: string;
+  kline: Kline;
+}
+
+// This is the discriminated union for all possible incoming WebSocket messages.
+export type WsMessage =
+  | { type: "Log"; payload: LogMessage }
+  | { type: "PortfolioState"; payload: PortfolioState }
+  | { type: "KlineData"; payload: KlineData }
+  | { type: "Connected" };

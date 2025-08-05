@@ -85,9 +85,9 @@ adx_period = { start = 10, end = 20, step = 2 }
 # These are hard rules that immediately disqualify a backtest run.
 [analysis.filters]
 # A run must have at least this many trades to be considered statistically significant.
-min_total_trades = 2
+min_total_trades = 50
 # A run will be discarded if its maximum drawdown was worse (larger) than this percentage.
-max_drawdown_pct = 70.0
+max_drawdown_pct = 20.0
 
 # --- Scoring Weights ---
 # These weights determine the importance of each metric in the final "desirability" score.

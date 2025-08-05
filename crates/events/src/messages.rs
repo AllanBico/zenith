@@ -1,5 +1,5 @@
 use chrono::{DateTime, Utc};
-use core_types::{Execution, Position};
+use core_types::{Execution, Position, Kline};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 
@@ -29,6 +29,13 @@ pub struct PortfolioState {
     pub positions: Vec<Position>,
 }
 
+/// A kline data message containing symbol and kline information.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct KlineData {
+    pub symbol: String,
+    pub kline: Kline,
+}
+
 /// The top-level WebSocket message enum.
 /// All communication from the server to the client will be one of these variants.
 ///
@@ -54,4 +61,6 @@ pub enum WsMessage {
     TradeExecuted(Execution),
     /// A simple message to confirm to a new client that its WebSocket connection is active.
     Connected,
+    /// Real-time kline data for a symbol.
+    KlineData(KlineData),
 }

@@ -1,11 +1,19 @@
 import React from "react";
+import { Sidebar } from "@/components/dashboard/Sidebar";
 
-// This layout is now much simpler. It just passes its children through,
-// as the main layout in the parent directory already provides the sidebar and main content area.
+// This layout is ONLY for the /admin/* routes.
+// It renders the persistent sidebar and a main content area for its children.
 export default function AdminLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  return <>{children}</>;
+  return (
+    <>
+      <Sidebar />
+      <main className="flex-1 p-8 overflow-y-auto">
+        {children}
+      </main>
+    </>
+  );
 }

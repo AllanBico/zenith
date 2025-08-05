@@ -30,6 +30,7 @@ api-client = { path = "crates/api-client" }
 backtester = { path = "crates/backtester" }
 configuration = { path = "crates/configuration" , features = ["clap"] }
 engine = { path = "crates/engine" }
+events = { path = "crates/events" }
 
 # For decimal number literals in the main application
 rust_decimal = { version = "1.35", features = ["serde"] }

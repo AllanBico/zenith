@@ -12,4 +12,4 @@ pub mod messages;
 
 // Re-export the core types to provide a clean public API.
 pub use error::EventsError;
-pub use messages::{LogLevel, LogMessage, PortfolioState, WsMessage};
+pub use messages::{LogLevel, LogMessage, PortfolioState, WsMessage, KlineData};

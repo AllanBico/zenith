@@ -3,6 +3,7 @@ use serde::Deserialize;
 use chrono::NaiveDate;
 use serde_json::Value as JsonValue;
 use core_types::enums::StrategyId;
+#[cfg(feature = "clap")]
 use clap::ValueEnum;
 /// The root configuration structure for the entire application.
 #[derive(Debug, Clone, Deserialize)]
@@ -58,12 +59,20 @@ pub struct LiveConfig {
     pub live_trading_enabled: bool,
     /// The timeframe interval to use for all bots (e.g., "1m", "5m", "1h").
     pub interval: String,
+    /// Enable broadcasting kline data to WebSocket clients.
+    #[serde(default = "default_broadcast_klines")]
+    pub broadcast_klines: bool,
     /// A collection of individual trading bots to run.
     #[serde(rename = "bot")]
     pub bots: Vec<LiveBotConfig>,
 }
+
+fn default_broadcast_klines() -> bool {
+    false
+}
 // --- Execution Mode ---
 // Defines the possible execution environments for the `run` command.
+#[cfg(feature = "clap")]
 #[derive(Debug, Clone, Copy, ValueEnum)]
 pub enum ExecutionMode {
     /// Live data, simulated execution (local `SimulatedExecutor`).

@@ -2,10 +2,27 @@ use crate::error::RiskError;
 use crate::RiskManager;
 use configuration::RiskManagement;
 use core_types::{OrderRequest, OrderSide, Signal};
+use core_types::enums::PositionSide;
 use events::PortfolioState;
 use rust_decimal::Decimal;
 use rust_decimal_macros::dec;
 use tracing;
+
+/// Rounds quantity to the appropriate precision for the given symbol.
+/// This prevents "Precision is over the maximum defined for this asset" errors.
+fn round_quantity_to_precision(symbol: &str, quantity: Decimal) -> Decimal {
+    // Simple precision mapping for common symbols
+    // In a real implementation, this would come from exchange info API
+    let precision = match symbol {
+        "BTCUSDT" => 3,  // BTC precision is 0.001
+        "ETHUSDT" => 3,  // ETH precision is 0.001
+        _ => 2,          // Default to 2 decimal places
+    };
+    
+    // Round to the specified precision
+    let scale = Decimal::from(10_i64.pow(precision as u32));
+    (quantity * scale).round() / scale
+}
 
 /// A simple, concrete implementation of the `RiskManager` trait.
 ///
@@ -61,6 +78,7 @@ impl RiskManager for SimpleRiskManager {
                 let mut close_order = signal.order_request.clone();
                 close_order.quantity = position.quantity;
                 close_order.side = position.side.opposite();
+                close_order.position_side = Some(PositionSide::from_order_side(close_order.side));
                 return Ok(close_order);
             }
             // If we have a position in the same direction, we'll add to it below
@@ -104,29 +122,56 @@ impl RiskManager for SimpleRiskManager {
         // Round to 6 decimal places to avoid precision issues with very small quantities
         let target_quantity = target_quantity.round_dp(6);
         
+        // Check for minimum order size (prevent dust orders)
+        let min_order_size = dec!(0.0001); // Reduced minimum for testing (0.0001 ETH/BTC)
+        if target_quantity < min_order_size {
+            tracing::warn!("Calculated quantity {} is below minimum order size {}. Skipping order.", target_quantity, min_order_size);
+            return Err(RiskError::Calculation(
+                format!("Order quantity {} is below minimum order size {}", target_quantity, min_order_size)
+            ));
+        }
+        
         // Debug logging
-        tracing::debug!("Risk calculation - Entry: {}, Risk Capital: {}, Position Value: {}, Max Allowed: {}, Target Qty: {}",
+        tracing::info!("Risk calculation - Entry: {}, Risk Capital: {}, Position Value: {}, Max Allowed: {}, Target Qty: {}",
             entry_price, scaled_risk_capital, position_value, max_position_value, target_quantity);
+        
+        // Additional debug info
+        tracing::info!("Risk params - Risk per trade: {}, Stop loss: {}, Confidence: {}, Total value: {}, Cash: {}",
+            self.params.risk_per_trade_pct, self.params.stop_loss_pct, signal.confidence, portfolio_state.total_value, portfolio_state.cash);
         
         // If we already have a position, calculate how much more to add
         let quantity = if let Some(position) = current_position {
-            // Don't reduce position size, only increase if needed
+            // Only add to position if target is larger than current
             if target_quantity > position.quantity {
                 target_quantity - position.quantity
             } else {
-                // If we're not increasing the position, return the original signal
-                // which will be a no-op (same side, same or smaller size)
-                return Ok(signal.order_request.clone());
+                // If target is smaller or equal, don't place an order
+                tracing::info!("Target quantity {} is not larger than current position {}. Skipping order.", target_quantity, position.quantity);
+                return Err(RiskError::Calculation(
+                    format!("Target quantity {} is not larger than current position {}. No order needed.", target_quantity, position.quantity)
+                ));
             }
         } else {
             target_quantity
         };
 
-        // --- 5. Construct Final Order Request ---
+        // --- 5. Round Quantity to Exchange Precision ---
+        // Round the quantity to the appropriate precision for the exchange
+        let rounded_quantity = round_quantity_to_precision(&signal.order_request.symbol, quantity);
+        tracing::info!("Precision rounding - Symbol: {}, Original: {}, Rounded: {}", 
+            signal.order_request.symbol, quantity, rounded_quantity);
+        
+        // --- 6. Construct Final Order Request ---
         // Create a new order request, using the original as a template but
         // overriding the quantity with our calculated, risk-managed value.
         let mut final_order = signal.order_request.clone();
-        final_order.quantity = quantity;
+        final_order.quantity = rounded_quantity;
+        
+        // Set the position side based on the order side
+        final_order.position_side = Some(PositionSide::from_order_side(signal.order_request.side));
+
+        tracing::info!("Final order - Symbol: {}, Side: {:?}, Position Side: {:?}, Quantity: {}, Price: {:?}",
+            final_order.symbol, final_order.side, final_order.position_side, final_order.quantity, final_order.price);
 
         Ok(final_order)
     }

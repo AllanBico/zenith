@@ -11,10 +11,12 @@ pub mod settings;
 
 // Re-export the core types to provide a clean public API.
 pub use settings::{
-    ExecutionMode, // <-- EXPORT THE NEW ENUM
     LiveBotConfig, LiveConfig,Config, FundingRateArbParams, MACrossoverParams, ProbReversionParams, RiskManagement,PortfolioBotConfig, PortfolioConfig,
     Simulation, Strategies, SuperTrendParams, LoggingConfig,
 };
+
+#[cfg(feature = "clap")]
+pub use settings::ExecutionMode;
 
 /// Loads the application configuration from the specified path.
 ///
