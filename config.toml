@@ -114,7 +114,7 @@ basis_safety_threshold = 0.005 # e.g., 0.5% basis between spot and perp
 # The minimum log level to display.
 # Options: "error", "warn", "info", "debug", "trace"
 # Default: "info"
-level = "info"
+level = "debug"
 
 # Enable colored output for log messages (recommended for terminals).
 # Default: true

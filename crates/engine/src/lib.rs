@@ -198,7 +198,7 @@ impl LiveEngine {
             tracing::warn!("No bots enabled in live.toml. Exiting.");
             return Ok(());
         }
-        let interval = &self.base_config.backtest.interval;
+        let interval = &self.live_config.interval;
         
         // The `live_mode` flag is now derived from the config, not passed in.
         let is_live = self.live_config.live_trading_enabled;

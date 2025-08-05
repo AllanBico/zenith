@@ -7,6 +7,7 @@ use uuid::Uuid;
 use chrono::Utc;
 use std::sync::Arc;
 use api_client::ApiClient;
+use tracing;
 
 /// A generic trait for an execution engine.
 ///
@@ -45,18 +46,25 @@ impl SimulatedExecutor {
     /// by a certain percentage of the bar's high-low range.
     fn calculate_slippage_price(&self, order_side: OrderSide, kline: &Kline) -> Decimal {
         let bar_range = kline.high - kline.low;
+        tracing::debug!("Slippage calculation: bar_range={}, slippage_pct={}", bar_range, self.params.slippage_pct);
+        
         if bar_range.is_zero() {
+            tracing::debug!("No bar range, returning close price: {}", kline.close);
             return kline.close; // No range, no slippage possible
         }
 
         let slippage_amount = bar_range * self.params.slippage_pct;
+        tracing::debug!("Slippage amount: {}", slippage_amount);
 
-        match order_side {
+        let result = match order_side {
             // For a buy, slippage makes the price HIGHER (worse).
             OrderSide::Buy => kline.close + slippage_amount,
             // For a sell, slippage makes the price LOWER (worse).
             OrderSide::Sell => kline.close - slippage_amount,
-        }
+        };
+        
+        tracing::debug!("Final execution price: {} (close: {}, side: {:?})", result, kline.close, order_side);
+        result
     }
 }
 
@@ -68,11 +76,15 @@ impl Executor for SimulatedExecutor {
         order: &OrderRequest,
         kline: &Kline,
     ) -> Result<Execution, ExecutorError> {
+        tracing::debug!("SimulatedExecutor: Executing order {:?} with kline {:?}", order, kline);
+        
         // 1. Calculate the execution price with slippage.
         let execution_price = self.calculate_slippage_price(order.side, kline);
+        tracing::debug!("SimulatedExecutor: Calculated execution price: {} (original close: {})", execution_price, kline.close);
 
         // 2. Calculate the trading fee.
         let fee = execution_price * order.quantity * self.params.taker_fee_pct;
+        tracing::debug!("SimulatedExecutor: Calculated fee: {}", fee);
 
         // 3. Construct the execution receipt.
         let execution = Execution {
@@ -87,6 +99,7 @@ impl Executor for SimulatedExecutor {
             side: order.side, // Add the side to the execution
         };
 
+        tracing::debug!("SimulatedExecutor: Created execution: {:?}", execution);
         Ok(execution)
     }
 }
@@ -111,14 +124,18 @@ impl Executor for LiveExecutor {
     async fn execute(
         &self,
         order: &OrderRequest,
-        _kline: &Kline, // The kline is not needed for a live market order
+        kline: &Kline, // The kline is not needed for a live market order
     ) -> Result<Execution, ExecutorError> {
+        tracing::debug!("LiveExecutor: Executing order {:?} with kline {:?}", order, kline);
+        
         let order_response = self
             .api_client
             .place_order(order)
             .await
             .map_err(|e| ExecutorError::Api(e.to_string()))?; // Convert ApiError to ExecutorError
 
+        tracing::debug!("LiveExecutor: Received order response: {:?}", order_response);
+        
         // Transform the exchange's OrderResponse into our internal Execution receipt.
         let execution = Execution {
             execution_id: Uuid::new_v4(),
@@ -133,6 +150,7 @@ impl Executor for LiveExecutor {
             timestamp: Utc::now(), // Use current time for live execution
         };
 
+        tracing::debug!("LiveExecutor: Created execution: {:?}", execution);
         Ok(execution)
     }
 }

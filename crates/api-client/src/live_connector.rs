@@ -84,6 +84,8 @@ impl LiveConnector {
         url.set_path(&format!("/stream"));
         url.set_query(Some(&format!("streams={}", streams)));
 
+        tracing::debug!("WebSocket URL: {}", url);
+
         // 3. Spawn a background task to manage the connection.
         tokio::spawn(async move {
             // 4. Implement the resilient reconnection loop.
@@ -94,29 +96,82 @@ impl LiveConnector {
                         tracing::info!("WebSocket connection established.");
                         // 5. Enter the message processing loop.
                         while let Some(msg) = stream.next().await {
-                            if let Ok(Message::Text(text)) = msg {
-                                // We only care about klines that are closed.
-                                if let Ok(wrapper) = serde_json::from_str::<WsStreamWrapper>(&text) {
-                                    if wrapper.data.event_type == "kline" && wrapper.data.kline.is_closed {
-                                        // Convert to our standard Kline type.
-                                        let k = wrapper.data.kline;
-                                        let kline = Kline {
-                                            open_time: Utc.timestamp_millis_opt(k.open_time).single().unwrap(),
-                                            open: Decimal::from_str(&k.open).unwrap(),
-                                            high: Decimal::from_str(&k.high).unwrap(),
-                                            low: Decimal::from_str(&k.low).unwrap(),
-                                            close: Decimal::from_str(&k.close).unwrap(),
-                                            volume: Decimal::from_str(&k.volume).unwrap(),
-                                            close_time: Utc.timestamp_millis_opt(k.close_time).single().unwrap(),
-                                            interval: k.interval,
-                                        };
+                            match msg {
+                                Ok(Message::Text(text)) => {
+                                    // We only care about klines that are closed.
+                                    match serde_json::from_str::<WsStreamWrapper>(&text) {
+                                        Ok(wrapper) => {
+                                            if wrapper.data.event_type == "kline" {
+                                                if wrapper.data.kline.is_closed {
+                                                    tracing::debug!("Raw WebSocket message (CLOSED kline): {}", text);
+                                                    tracing::debug!("Processing closed kline for symbol: {}", wrapper.data.symbol);
+                                                    tracing::debug!("Raw kline data: {:?}", wrapper.data.kline);
+                                                    
+                                                    // Convert to our standard Kline type.
+                                                    let k = wrapper.data.kline;
+                                                    
+                                                    // Debug the conversion process
+                                                    tracing::debug!("Converting kline data:");
+                                                    tracing::debug!("  Open time: {} -> {:?}", k.open_time, Utc.timestamp_millis_opt(k.open_time));
+                                                    tracing::debug!("  Close time: {} -> {:?}", k.close_time, Utc.timestamp_millis_opt(k.close_time));
+                                                    tracing::debug!("  Open: {} -> {:?}", k.open, Decimal::from_str(&k.open));
+                                                    tracing::debug!("  High: {} -> {:?}", k.high, Decimal::from_str(&k.high));
+                                                    tracing::debug!("  Low: {} -> {:?}", k.low, Decimal::from_str(&k.low));
+                                                    tracing::debug!("  Close: {} -> {:?}", k.close, Decimal::from_str(&k.close));
+                                                    tracing::debug!("  Volume: {} -> {:?}", k.volume, Decimal::from_str(&k.volume));
+                                                    
+                                                    let kline = Kline {
+                                                        open_time: Utc.timestamp_millis_opt(k.open_time).single().unwrap(),
+                                                        open: Decimal::from_str(&k.open).unwrap(),
+                                                        high: Decimal::from_str(&k.high).unwrap(),
+                                                        low: Decimal::from_str(&k.low).unwrap(),
+                                                        close: Decimal::from_str(&k.close).unwrap(),
+                                                        volume: Decimal::from_str(&k.volume).unwrap(),
+                                                        close_time: Utc.timestamp_millis_opt(k.close_time).single().unwrap(),
+                                                        interval: k.interval,
+                                                    };
 
-                                        // Send the symbol and kline to the engine. If it fails, the engine is gone, so we exit.
-                                        if tx.send((wrapper.data.symbol, kline)).await.is_err() {
-                                            tracing::error!("Receiver dropped. Closing WebSocket connection.");
-                                            return;
+                                                    tracing::debug!("Converted kline: {:?}", kline);
+
+                                                    // Send the symbol and kline to the engine. If it fails, the engine is gone, so we exit.
+                                                    match tx.send((wrapper.data.symbol.clone(), kline)).await {
+                                                        Ok(_) => {
+                                                            tracing::debug!("Successfully sent kline for symbol: {}", wrapper.data.symbol);
+                                                        }
+                                                        Err(_) => {
+                                                            tracing::error!("Receiver dropped. Closing WebSocket connection.");
+                                                            return;
+                                                        }
+                                                    }
+                                                }
+                                                // Skip non-closed klines silently
+                                            }
+                                            // Skip non-kline events silently
+                                        }
+                                        Err(e) => {
+                                            tracing::warn!("Failed to parse WebSocket message as WsStreamWrapper: {}", e);
                                         }
                                     }
+                                }
+                                Ok(Message::Binary(data)) => {
+                                    tracing::debug!("Received binary message of {} bytes", data.len());
+                                }
+                                Ok(Message::Ping(data)) => {
+                                    tracing::debug!("Received ping with {} bytes", data.len());
+                                }
+                                Ok(Message::Pong(data)) => {
+                                    tracing::debug!("Received pong with {} bytes", data.len());
+                                }
+                                Ok(Message::Close(frame)) => {
+                                    tracing::info!("WebSocket connection closed: {:?}", frame);
+                                    break;
+                                }
+                                Ok(Message::Frame(_)) => {
+                                    tracing::debug!("Received raw frame");
+                                }
+                                Err(e) => {
+                                    tracing::error!("WebSocket message error: {}", e);
+                                    break;
                                 }
                             }
                         }
