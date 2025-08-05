@@ -13,4 +13,7 @@ pub enum ExecutorError {
     
     #[error("An unexpected portfolio state was encountered: {0}")]
     PortfolioError(String),
+
+    #[error("API error: {0}")]
+    Api(String),
 }

@@ -3,6 +3,7 @@ use serde::Deserialize;
 use chrono::NaiveDate;
 use serde_json::Value as JsonValue;
 use core_types::enums::StrategyId;
+use clap::ValueEnum;
 /// The root configuration structure for the entire application.
 #[derive(Debug, Clone, Deserialize)]
 pub struct Config {
@@ -58,7 +59,17 @@ pub struct LiveConfig {
     #[serde(rename = "bot")]
     pub bots: Vec<LiveBotConfig>,
 }
-
+// --- Execution Mode ---
+// Defines the possible execution environments for the `run` command.
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum ExecutionMode {
+    /// Live data, simulated execution (local `SimulatedExecutor`).
+    Paper,
+    /// Live data, real orders sent to the Binance Testnet exchange.
+    Testnet,
+    /// Live data, real orders sent to the Binance Production exchange (REAL MONEY).
+    Live,
+}
 /// Defines a single trading bot for the live engine.
 #[derive(Debug, Clone, Deserialize)]
 pub struct LiveBotConfig {

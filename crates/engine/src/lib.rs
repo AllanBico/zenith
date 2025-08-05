@@ -1,21 +1,24 @@
 use crate::error::EngineError;
-use api_client::ApiClient;
+use api_client::{ApiClient, LiveConnector}; // LiveConnector is needed here now
 use configuration::{Config, LiveConfig};
 use database::DbRepository;
-use executor::Portfolio;
-use risk::{SimpleRiskManager, RiskManager};
-use rust_decimal::Decimal;
+use executor::{Executor, Portfolio}; // Import the generic Executor trait
+use risk::RiskManager;
 use std::collections::HashMap;
 use std::sync::Arc;
 use strategies::Strategy;
 use tokio::sync::Mutex;
 use uuid::Uuid;
 use chrono::Utc;
+use events;
+
+pub mod error;
 pub mod reconciler;
+
 pub use reconciler::StateReconciler;
 /// Rounds quantity to the appropriate precision for the given symbol.
 /// This is a simple implementation - in production, you'd fetch this from exchange info.
-fn round_quantity_to_precision(symbol: &str, quantity: Decimal) -> Decimal {
+fn round_quantity_to_precision(symbol: &str, quantity: rust_decimal::Decimal) -> rust_decimal::Decimal {
     // Simple precision mapping for common symbols
     // In a real implementation, this would come from exchange info API
     let precision = match symbol {
@@ -25,7 +28,7 @@ fn round_quantity_to_precision(symbol: &str, quantity: Decimal) -> Decimal {
     };
     
     // Round to the specified precision
-    let scale = Decimal::from(10_i64.pow(precision as u32));
+    let scale = rust_decimal::Decimal::from(10_i64.pow(precision as u32));
     (quantity * scale).round() / scale
 }
 
@@ -37,8 +40,6 @@ pub struct KlineWithSymbol {
     pub kline: core_types::Kline,
 }
 
-pub mod error;
-// pub mod util;
 /// A container for the components related to a single trading instrument.
 pub struct Bot {
     pub symbol: String,
@@ -46,50 +47,47 @@ pub struct Bot {
 }
 
 /// The central orchestrator for the live trading application.
-///
-/// This struct holds all the shared components and is responsible for the main
-/// event loop that drives the trading logic in real-time.
-pub struct Engine {
+pub struct LiveEngine {
     // --- Configuration ---
     live_config: LiveConfig,
     base_config: Config,
 
     // --- Shared, Thread-Safe Components ---
-    // `Arc` allows multiple parts of the engine to safely share ownership of these components.
-    api_client: Arc<dyn ApiClient>,
+    api_client: Arc<dyn ApiClient>, // Still needed for state reconciliation
+    executor: Arc<dyn Executor>,   // The generic executor for placing orders
     db_repo: DbRepository,
-    // `Mutex` ensures that only one task can access the portfolio state at a time, preventing race conditions.
     portfolio: Arc<Mutex<Portfolio>>,
-    risk_manager: SimpleRiskManager,
+    risk_manager: Arc<dyn RiskManager>,
 
     // --- Bot Management ---
-    // A map from a symbol (e.g., "BTCUSDT") to its corresponding Bot instance.
     bots: HashMap<String, Bot>,
 }
 
 
-impl Engine {
-    /// Creates a new `Engine` instance with all its required components.
+impl LiveEngine {
+    /// Creates a new `LiveEngine` instance with all its required components.
     pub fn new(
         live_config: LiveConfig,
         base_config: Config,
         api_client: Arc<dyn ApiClient>,
+        executor: Arc<dyn Executor>, // <-- NEW: Accepts a generic executor
         db_repo: DbRepository,
-    ) -> Result<Self, EngineError> {
-        // The portfolio is initialized empty. It will be populated by the `init` method.
+        risk_manager: Arc<dyn RiskManager>,
+    ) -> Self {
         let portfolio = Arc::new(Mutex::new(Portfolio::new(
-            base_config.backtest.initial_capital, // Start with this as a placeholder
+            base_config.backtest.initial_capital,
         )));
 
-        Ok(Self {
+        Self {
             live_config,
-            base_config: base_config.clone(),
-            api_client,
+            base_config,
+            api_client, // The ApiClient is now passed through
+            executor,   // Store the generic executor
             db_repo,
             portfolio,
-            risk_manager: SimpleRiskManager::new(base_config.risk_management.clone())?,
+            risk_manager,
             bots: HashMap::new(),
-        })
+        }
     }
 
     /// Initializes the engine to a ready state for live trading.
@@ -141,7 +139,7 @@ impl Engine {
         let total_positions = positions.len();
         for pos in positions {
             // We only care about positions that are actually open (non-zero amount).
-            if pos.position_amt != Decimal::ZERO {
+            if pos.position_amt != rust_decimal::Decimal::ZERO {
                 open_positions_count += 1;
                 let side = if pos.position_amt.is_sign_positive() {
                     core_types::OrderSide::Buy
@@ -192,10 +190,8 @@ impl Engine {
 
     /// The main event loop for the live trading engine.
     pub async fn run(&mut self) -> Result<(), EngineError> {
-        // 1. Perform all startup initializations.
         self.init().await?;
 
-        // 2. Set up the live data subscription.
         let symbols: Vec<String> = self.bots.keys().cloned().collect();
         if symbols.is_empty() {
             println!("[WARN] No bots enabled in live.toml. Exiting.");
@@ -203,32 +199,22 @@ impl Engine {
         }
         let interval = &self.base_config.backtest.interval;
         
-        let connector = api_client::LiveConnector::new(self.live_config.live_trading_enabled);
+        // The `live_mode` flag is now derived from the config, not passed in.
+        let is_live = self.live_config.live_trading_enabled;
+        let connector = LiveConnector::new(is_live);
         let mut kline_rx = connector.subscribe_to_klines(&symbols, interval)?;
         
-        // --- NEW: Launch the State Reconciler ---
-        // 3. Create and spawn the reconciler as a concurrent background task.
         let reconciler = StateReconciler::new(
-            Arc::clone(&self.portfolio),   // Give it a shared pointer to the portfolio
-            Arc::clone(&self.api_client),  // Give it a shared pointer to the api_client
-            self.db_repo.clone(),          // Give it a clone of the db_repo
+            Arc::clone(&self.portfolio),
+            Arc::clone(&self.api_client),
+            self.db_repo.clone(),
         );
         tokio::spawn(reconciler.start());
-        // The reconciler will now run in the background, checking our state every 30 seconds.
-        // --- END NEW SECTION ---
         
         println!("\n--- Engine is running. Subscribed to {} kline streams. Waiting for market data... ---", symbols.len());
 
-        // 4. Enter the main event loop.
         while let Some((symbol, kline)) = kline_rx.recv().await {
-            // Create a wrapper with the actual symbol from the WebSocket
-            let kline_with_symbol = KlineWithSymbol {
-                symbol,
-                kline,
-            };
-            
-            // Every time a new kline is received, process it.
-            if let Err(e) = self.process_kline(kline_with_symbol).await {
+            if let Err(e) = self.process_kline(&symbol, &kline).await {
                 eprintln!("[ERROR] Failed to process kline: {:?}", e);
             }
         }
@@ -238,98 +224,38 @@ impl Engine {
     }
 
     /// The core logic for processing a single market event (Kline).
-    async fn process_kline(&mut self, kline_with_symbol: KlineWithSymbol) -> Result<(), EngineError> {
-        // Debug: Print received kline data
-        println!("[DEBUG] Received kline for {}: O:{:.2} H:{:.2} L:{:.2} C:{:.2} V:{:.2} at {}", 
-            kline_with_symbol.symbol,
-            kline_with_symbol.kline.open,
-            kline_with_symbol.kline.high,
-            kline_with_symbol.kline.low,
-            kline_with_symbol.kline.close,
-            kline_with_symbol.kline.volume,
-            kline_with_symbol.kline.open_time.format("%H:%M:%S")
-        );
+    async fn process_kline(&mut self, symbol: &str, kline: &core_types::Kline) -> Result<(), EngineError> {
+        let bot = self.bots.get_mut(symbol).ok_or_else(|| EngineError::BotNotFound(symbol.to_string()))?;
 
-        // 1. Route: Find the bot responsible for this symbol.
-        let bot = self.bots.get_mut(&kline_with_symbol.symbol)
-            .ok_or_else(|| EngineError::BotNotFound(kline_with_symbol.symbol.clone()))?;
+        if let Some(signal) = bot.strategy.evaluate(kline)? {
+            println!("\nSignal generated for {}: {:?} at price {}", bot.symbol, signal.order_request.side, kline.close);
 
-        println!("[DEBUG] Processing kline for bot: {} with strategy: {:?}", 
-            bot.symbol, std::any::type_name_of_val(&*bot.strategy));
-
-        // 2. Evaluate: Let the bot's strategy evaluate the new data.
-        println!("[DEBUG] Evaluating strategy for {} at price {:.2}", bot.symbol, kline_with_symbol.kline.close);
-        let signal_result = bot.strategy.evaluate(&kline_with_symbol.kline);
-        
-        match signal_result {
-            Ok(Some(signal)) => {
-                println!("[SIGNAL] Generated for {}: {:?} at price {:.2}", bot.symbol, signal.order_request.side, kline_with_symbol.kline.close);
-
-                            // 3. Risk Management: Get current portfolio state and evaluate risk.
             let portfolio_guard = self.portfolio.lock().await;
-            
-            // Debug: Log portfolio state
-            println!("[DEBUG] Portfolio has {} positions: {:?}", 
-                portfolio_guard.positions.len(), 
-                portfolio_guard.positions.keys().collect::<Vec<_>>()
-            );
-            
-            // Build market prices for all symbols in the portfolio
-            let mut market_prices = HashMap::new();
-            
-            // Add the current symbol's price
-            market_prices.insert(bot.symbol.clone(), kline_with_symbol.kline.close);
-            
-            // For other symbols in the portfolio, we need to get their current prices
-            // For now, we'll use a placeholder approach - in a real system, you'd have
-            // a separate task updating mark prices for all symbols
-            for (symbol, _) in &portfolio_guard.positions {
-                if symbol != &bot.symbol {
-                    // For now, use the last known price or a placeholder
-                    // In a real implementation, you'd fetch this from a price cache
-                    market_prices.insert(symbol.clone(), kline_with_symbol.kline.close); // Placeholder
-                    println!("[DEBUG] Using placeholder price for {}: {:.2}", symbol, kline_with_symbol.kline.close);
-                }
-            }
-            
-            let latest_equity = portfolio_guard.calculate_total_equity(&market_prices)?;
-                
-                let portfolio_state = events::PortfolioState {
-                    timestamp: Utc::now(),
-                    cash: portfolio_guard.cash,
-                    total_value: latest_equity,
-                    positions: portfolio_guard.positions.values().cloned().collect(),
-                };
-                // Drop the lock as soon as we're done reading the state.
-                drop(portfolio_guard);
+            let latest_equity = portfolio_guard.calculate_total_equity(&HashMap::from([(bot.symbol.clone(), kline.close)]))?;
+            let portfolio_state = events::PortfolioState {
+                timestamp: Utc::now(),
+                cash: portfolio_guard.cash,
+                total_value: latest_equity,
+                positions: portfolio_guard.positions.values().cloned().collect(),
+            };
+            drop(portfolio_guard);
 
-                let mut order_request = self.risk_manager.evaluate_signal(&signal, &portfolio_state, kline_with_symbol.kline.close)?;
-                
-                // Fix precision issue by rounding to appropriate decimal places
-                order_request.quantity = round_quantity_to_precision(&order_request.symbol, order_request.quantity);
-                
-                // Add position side for hedge mode
-                order_request.position_side = Some(core_types::enums::PositionSide::from_order_side(order_request.side));
-                
-                println!("[RISK] Assessment passed. Final Order: {:?} {} @ Market", order_request.quantity, order_request.symbol);
+            let order_request = self.risk_manager.evaluate_signal(&signal, &portfolio_state, kline.close)?;
+            println!("Risk assessment passed. Final Order: {:?} {} @ Market", order_request.quantity, order_request.symbol);
 
-                // 4. Execution: Place the final, risk-managed order.
-                match self.api_client.place_order(&order_request).await {
-                    Ok(response) => {
-                        println!("[SUCCESS] Order placed successfully. Response: {:?}", response.status);
-                        // Here we would ideally save the confirmed order to the database.
-                    }
-                    Err(e) => {
-                        eprintln!("[ERROR] Failed to place order for {}: {:?}", bot.symbol, e);
-                        // Here we would send a Telegram alert about the failed order.
-                    }
+            // --- THE KEY CHANGE IS HERE ---
+            // We now call the generic `executor`, not the `api_client`.
+            match self.executor.execute(&order_request, kline).await {
+                Ok(execution) => {
+                    println!("SUCCESS: Execution confirmed: {:?}", execution);
+                    // In a real system, we'd wait for a WebSocket confirmation before updating state.
+                    // For now, we update our local portfolio optimistically.
+                    let mut portfolio = self.portfolio.lock().await;
+                    portfolio.update_with_execution(&execution)?;
                 }
-            },
-            Ok(None) => {
-                println!("[DEBUG] No signal generated for {} at price {:.2}", bot.symbol, kline_with_symbol.kline.close);
-            },
-            Err(e) => {
-                eprintln!("[ERROR] Strategy evaluation failed for {}: {:?}", bot.symbol, e);
+                Err(e) => {
+                    eprintln!("ERROR: Failed to execute order for {}: {:?}", bot.symbol, e);
+                }
             }
         }
         Ok(())

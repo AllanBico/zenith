@@ -4,10 +4,10 @@ use backtester::Backtester;
 use chrono::{DateTime, NaiveDate, Utc, Duration, Datelike};
 use clap::{Parser, Subcommand};
 use comfy_table::{presets::UTF8_FULL, Cell, ContentArrangement, Table};
-use configuration::{load_config, load_live_config, load_optimizer_config, load_portfolio_config, PortfolioBotConfig, MACrossoverParams, ProbReversionParams, SuperTrendParams};
+use configuration::{load_config, load_live_config, load_optimizer_config, load_portfolio_config, PortfolioBotConfig, MACrossoverParams, ProbReversionParams, SuperTrendParams, ExecutionMode};
 use database::{connect, run_migrations, DbRepository};
-use engine::Engine;
-use executor::{Portfolio, SimulatedExecutor};
+use engine::LiveEngine;
+use executor::{Portfolio, SimulatedExecutor, LiveExecutor};
 use futures::future::join_all;
 use indicatif::{ProgressBar, ProgressStyle};
 use optimizer::Optimizer;
@@ -126,9 +126,10 @@ struct PortfolioRunArgs {
 
 #[derive(Parser)]
 struct RunArgs {
-    /// Use the production Binance API (real money). Defaults to Testnet.
-    #[arg(long)]
-    live: bool,
+    /// The execution mode for the engine.
+    #[arg(long, value_enum, default_value_t = ExecutionMode::Paper)]
+    mode: ExecutionMode,
+
     /// Path to the live trading configuration file.
     #[arg(long, short, default_value = "live.toml")]
     config: PathBuf,
@@ -157,28 +158,74 @@ async fn handle_run(args: RunArgs) -> Result<()> {
     let base_config = load_config(None)?;
     let live_config = load_live_config(&args.config)?;
 
-    // 2. OBEY THE MASTER SAFETY SWITCH
-    if args.live && !live_config.live_trading_enabled {
-        anyhow::bail!("FATAL: Attempted to run in --live mode, but `live_trading_enabled` is false in live.toml. Aborting for safety.");
-    }
-    let mode = if args.live { "LIVE (REAL MONEY)" } else { "TESTNET" };
-    println!("---===[ Starting Live Trading Engine in {} Mode ]===---", mode);
-
-    // 3. Instantiate Shared Components
-    // We use Arc to allow shared ownership across async tasks.
-    let api_client = Arc::new(BinanceClient::new(args.live, &base_config.api));
+    // 2. Instantiate shared components
     let db_pool = connect().await?;
     run_migrations(&db_pool).await?;
     let db_repo = DbRepository::new(db_pool);
-    let _risk_manager = Arc::new(SimpleRiskManager::new(base_config.risk_management.clone())?);
 
-    // 4. Create and Run the Engine
-    let mut engine = Engine::new(
+    // --- MASTER EXECUTION LOGIC ---
+    let (executor, api_client): (Arc<dyn executor::Executor>, Arc<dyn ApiClient>) =
+        match args.mode {
+            ExecutionMode::Paper => {
+                println!("[INFO] INITIALIZING IN PAPER TRADING MODE");
+                println!("[INFO] >> Live data feed | Simulated local execution <<");
+
+                // In Paper mode, the executor is the SIMULATED one.
+                let simulated_executor = Arc::new(SimulatedExecutor::new(base_config.simulation.clone()));
+
+                // We still need an API client for the StateReconciler, which should use the Testnet.
+                let api_client = Arc::new(BinanceClient::new(false, &base_config.api)); // false = Testnet
+
+                (simulated_executor, api_client)
+            }
+            ExecutionMode::Testnet => {
+                println!("[WARN] INITIALIZING IN TESTNET TRADING MODE");
+                println!("[WARN] >> Live data feed | REAL orders sent to Binance TESTNET <<");
+
+                // In Testnet mode, the executor is the LIVE one, pointing to the Testnet API client.
+                let binance_client = BinanceClient::new(false, &base_config.api); // false = Testnet
+                let api_client = Arc::new(binance_client) as Arc<dyn ApiClient>;
+                let live_executor = Arc::new(LiveExecutor::new(Arc::clone(&api_client)));
+
+                (live_executor, api_client)
+            }
+            ExecutionMode::Live => {
+                println!("\n!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
+                println!("[CRITICAL] INITIALIZING IN LIVE TRADING MODE");
+                println!("[CRITICAL] >> REAL MONEY IS AT RISK. PROCEED WITH CAUTION. <<");
+                println!("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n");
+
+                // OBEY THE MASTER SAFETY SWITCH
+                if !live_config.live_trading_enabled {
+                    anyhow::bail!("FATAL: Attempted to run in Live mode, but `live_trading_enabled` is false in live.toml. Aborting.");
+                }
+
+                // In Live mode, the executor is the LIVE one, pointing to the PRODUCTION API client.
+                let binance_client = BinanceClient::new(true, &base_config.api); // true = Production
+                let api_client = Arc::new(binance_client) as Arc<dyn ApiClient>;
+                let live_executor = Arc::new(LiveExecutor::new(Arc::clone(&api_client)));
+
+                // Add a 5-second countdown to allow the user to abort.
+                println!("Starting in 5 seconds... Press Ctrl+C to cancel.");
+                tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+
+                (live_executor, api_client)
+            }
+        };
+
+    // 4. Create and Run the Engine (this part is now generic)
+    // The engine doesn't know or care which executor it was given.
+    let risk_manager = Arc::new(SimpleRiskManager::new(base_config.risk_management.clone())?);
+
+    // This is the missing piece from the next task, we add it here now.
+    let mut engine = LiveEngine::new(
         live_config,
         base_config,
         api_client,
+        executor, // Pass in the generic executor
         db_repo,
-    )?;
+        risk_manager,
+    );
 
     engine.run().await?;
     

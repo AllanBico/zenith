@@ -28,7 +28,7 @@ analyzer = { path = "crates/analyzer" }
 analytics = { path = "crates/analytics" }
 api-client = { path = "crates/api-client" }
 backtester = { path = "crates/backtester" }
-configuration = { path = "crates/configuration" }
+configuration = { path = "crates/configuration" , features = ["clap"] }
 engine = { path = "crates/engine" }
 
 # For decimal number literals in the main application
