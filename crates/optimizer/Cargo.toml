@@ -54,3 +54,5 @@ itertools = "0.14"
 
 # For generating unique IDs for the optimization job and backtest runs.
 uuid = { version = "1.8", features = ["v4"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }

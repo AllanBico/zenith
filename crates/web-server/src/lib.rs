@@ -3,10 +3,15 @@ use axum::{
     routing::get,
     Router,
 };
+use tracing;
 use database::DbRepository;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use tower_http::cors::{Any, CorsLayer, AllowOrigin, ExposeHeaders, AllowHeaders};
+use tower_http::{
+    cors::{Any, CorsLayer, AllowOrigin, ExposeHeaders, AllowHeaders},
+    trace::TraceLayer, // <-- Import the TraceLayer
+};
+// Note: Tracing is now handled by the main application configuration
 
 
 
@@ -21,8 +26,12 @@ pub struct AppState {
 
 
 
+
 /// The main function to configure and run the web server.
 pub async fn run_server(addr: SocketAddr) -> anyhow::Result<()> {
+    // Note: Tracing is already initialized in main.rs, so we don't need to initialize it again here.
+    // This prevents conflicts between different tracing subscribers.
+
     dotenvy::dotenv().ok();
     let db_pool = database::connect().await?;
     database::run_migrations(&db_pool).await?;
@@ -49,9 +58,14 @@ pub async fn run_server(addr: SocketAddr) -> anyhow::Result<()> {
         // .route("/ws", get(handlers::websocket_handler)) // WebSocket handler will be added in the next task
         .with_state(app_state)
         .layer(cors)
+        // --- ADD THE TRACE LAYER ---
+        // This middleware will automatically log information about every incoming request.
+        .layer(TraceLayer::new_for_http())
         .layer(DefaultBodyLimit::max(1024 * 1024 * 50)); // Set a 50MB body limit
 
-    println!(">> Web server listening on http://{}", addr);
+    tracing::info!("Web server listening on http://{}", addr);
+    tracing::info!("Web server started and listening on {}", addr); // <-- Use tracing::info!
+
     let listener = tokio::net::TcpListener::bind(addr).await?;
     axum::serve(listener, app).await?;
 

@@ -1,6 +1,7 @@
 use crate::{error::AppError, AppState};
 use analyzer::{Analyzer, RankedReport};
 use database::repository::BacktestRunDetails;
+use tracing;
 use axum::{
     extract::{
         ws::{Message, WebSocket, WebSocketUpgrade},
@@ -112,7 +113,7 @@ pub async fn websocket_handler(
 }
 
 async fn handle_socket(mut socket: WebSocket, _state: Arc<AppState>) {
-    println!("[WS] New client connected.");
+    tracing::info!("[WS] New client connected.");
     if socket.send(Message::Text("Welcome!".to_string())).await.is_err() {
         return;
     }
@@ -122,15 +123,15 @@ async fn handle_socket(mut socket: WebSocket, _state: Arc<AppState>) {
                 if socket.send(Message::Text(format!("You sent: {}", t))).await.is_err() { break; }
             }
             Ok(Message::Close(_)) => {
-                println!("[WS] Client disconnected.");
+                tracing::info!("[WS] Client disconnected.");
                 break;
             }
             Err(e) => {
-                println!("[WS] Error: {}", e);
+                tracing::error!(error = %e, "[WS] Error.");
                 break;
             }
             _ => {}
         }
     }
-    println!("[WS] Connection closed.");
+    tracing::info!("[WS] Connection closed.");
 }

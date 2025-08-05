@@ -13,6 +13,9 @@ pub struct Config {
     pub strategies: Strategies,
     /// Configuration for backtesting parameters
     pub backtest: Backtest,
+    /// Configuration for logging and tracing
+    #[serde(default)]
+    pub logging: LoggingConfig,
 }
 /// Holds the API connection details and secrets for different environments.
 #[derive(Debug, Clone, Deserialize)]
@@ -166,4 +169,68 @@ pub struct PortfolioBotConfig {
     pub strategy_id: StrategyId,
     /// The specific parameters for this bot, stored as a flexible JSON/TOML object.
     pub params: JsonValue,
+}
+
+/// Configuration for logging and tracing output.
+#[derive(Debug, Clone, Deserialize)]
+pub struct LoggingConfig {
+    /// The minimum log level to display.
+    /// Options: "error", "warn", "info", "debug", "trace"
+    #[serde(default = "default_log_level")]
+    pub level: String,
+    
+    /// Enable colored output for log messages.
+    #[serde(default = "default_colored")]
+    pub colored: bool,
+    
+    /// Enable timestamps in log messages.
+    #[serde(default = "default_timestamps")]
+    pub timestamps: bool,
+    
+    /// Enable thread IDs in log messages.
+    #[serde(default = "default_thread_ids")]
+    pub thread_ids: bool,
+    
+    /// Enable target/module information in log messages.
+    #[serde(default = "default_targets")]
+    pub targets: bool,
+    
+    /// Custom log level overrides for specific modules.
+    /// Format: "module_name=level"
+    #[serde(default)]
+    pub overrides: Vec<String>,
+}
+
+impl Default for LoggingConfig {
+    fn default() -> Self {
+        Self {
+            level: default_log_level(),
+            colored: default_colored(),
+            timestamps: default_timestamps(),
+            thread_ids: default_thread_ids(),
+            targets: default_targets(),
+            overrides: Vec::new(),
+        }
+    }
+}
+
+// Default functions for LoggingConfig
+fn default_log_level() -> String {
+    "info".to_string()
+}
+
+fn default_colored() -> bool {
+    true
+}
+
+fn default_timestamps() -> bool {
+    true
+}
+
+fn default_thread_ids() -> bool {
+    false
+}
+
+fn default_targets() -> bool {
+    true
 }

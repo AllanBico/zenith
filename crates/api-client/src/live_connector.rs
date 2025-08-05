@@ -6,6 +6,7 @@ use serde::Deserialize;
 use std::str::FromStr;
 use tokio::sync::mpsc;
 use tokio_tungstenite::{connect_async, tungstenite::Message};
+use tracing;
 use url::Url;
 use chrono::{TimeZone, Utc};
 
@@ -87,10 +88,10 @@ impl LiveConnector {
         tokio::spawn(async move {
             // 4. Implement the resilient reconnection loop.
             loop {
-                println!("Connecting to WebSocket...");
+                tracing::info!("Connecting to WebSocket...");
                 match connect_async(url.clone()).await {
                     Ok((mut stream, _)) => {
-                        println!("WebSocket connection established.");
+                        tracing::info!("WebSocket connection established.");
                         // 5. Enter the message processing loop.
                         while let Some(msg) = stream.next().await {
                             if let Ok(Message::Text(text)) = msg {
@@ -112,7 +113,7 @@ impl LiveConnector {
 
                                         // Send the symbol and kline to the engine. If it fails, the engine is gone, so we exit.
                                         if tx.send((wrapper.data.symbol, kline)).await.is_err() {
-                                            eprintln!("Receiver dropped. Closing WebSocket connection.");
+                                            tracing::error!("Receiver dropped. Closing WebSocket connection.");
                                             return;
                                         }
                                     }
@@ -121,10 +122,10 @@ impl LiveConnector {
                         }
                     }
                     Err(e) => {
-                        eprintln!("WebSocket connection error: {}", e);
+                        tracing::error!(error = %e, "WebSocket connection error.");
                     }
                 }
-                eprintln!("WebSocket disconnected. Reconnecting in 5 seconds...");
+                tracing::warn!("WebSocket disconnected. Reconnecting in 5 seconds...");
                 tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
             }
         });

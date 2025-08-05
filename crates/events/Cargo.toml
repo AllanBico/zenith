@@ -25,3 +25,5 @@ thiserror = "2.0"
 
 # For precise decimal calculations in financial events.
 rust_decimal = { version = "1.36", features = ["serde"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }

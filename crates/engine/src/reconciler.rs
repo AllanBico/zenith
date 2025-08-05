@@ -5,6 +5,7 @@ use executor::Portfolio;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio::time::{interval, Duration};
+use tracing;
 use rust_decimal::Decimal;
 use std::collections::HashMap;
 use std::str::FromStr;
@@ -40,7 +41,7 @@ impl StateReconciler {
     }
 
     pub async fn run_reconciliation(&self) -> Result<(), EngineError> {
-        println!("[RECONCILER] Running state reconciliation check...");
+        tracing::info!("[RECONCILER] Running state reconciliation check...");
 
         // 1. Concurrently fetch the ground truth from the exchange.
         let (balances_result, positions_result) = tokio::join!(
@@ -67,7 +68,7 @@ impl StateReconciler {
             let live_cash = usdt_balance.available_balance;
             // Use a small tolerance for dust amounts
             if (local_cash - live_cash).abs() > Decimal::from_str_exact("0.01").unwrap() {
-                println!("[RECONCILER-WARN] Cash discrepancy found! Local: {:.4}, Exchange: {:.4}", local_cash, live_cash);
+                tracing::warn!("[RECONCILER-WARN] Cash discrepancy found! Local: {:.4}, Exchange: {:.4}", local_cash, live_cash);
                 // In the future: self.db_repo.log_discrepancy(...)
             }
         }
@@ -84,31 +85,31 @@ impl StateReconciler {
                 let live_qty = live_pos.position_amt;
 
                 if local_qty != live_qty {
-                    println!("[RECONCILER-ERROR] Quantity discrepancy for {}! Local: {}, Exchange: {}", symbol, local_qty, live_qty);
+                    tracing::error!("[RECONCILER-ERROR] Quantity discrepancy for {}! Local: {}, Exchange: {}", symbol, local_qty, live_qty);
                 }
 
                 if (local_pos.entry_price - live_pos.entry_price).abs() > Decimal::from_str_exact("0.0001").unwrap() {
-                     println!("[RECONCILER-WARN] Entry price discrepancy for {}! Local: {}, Exchange: {}", symbol, local_pos.entry_price, live_pos.entry_price);
+                     tracing::warn!("[RECONCILER-WARN] Entry price discrepancy for {}! Local: {}, Exchange: {}", symbol, local_pos.entry_price, live_pos.entry_price);
                 }
             } else {
                 // Position exists locally but NOT on the exchange (a "ghost" position).
-                println!("[RECONCILER-CRITICAL] Ghost position found! Local state shows a position for {}, but none exists on the exchange.", symbol);
+                tracing::error!("[RECONCILER-CRITICAL] Ghost position found! Local state shows a position for {}, but none exists on the exchange.", symbol);
             }
         }
 
         // 5. Check for positions that exist on the exchange but NOT locally.
         for (symbol, live_pos) in &live_positions_map {
             if !checked_symbols.contains(symbol) {
-                 println!("[RECONCILER-CRITICAL] Un-tracked position found! Exchange shows a position for {} ({}), but it does not exist in local state.", symbol, live_pos.position_amt);
+                 tracing::error!("[RECONCILER-CRITICAL] Un-tracked position found! Exchange shows a position for {} ({}), but it does not exist in local state.", symbol, live_pos.position_amt);
             }
         }
 
-        println!("[RECONCILER] Reconciliation check complete.");
+        tracing::info!("[RECONCILER] Reconciliation check complete.");
         Ok(())
     }
 
     pub async fn start(self) {
-        println!("[RECONCILER] Starting continuous state reconciliation task...");
+        tracing::info!("[RECONCILER] Starting continuous state reconciliation task...");
         // Create a timer that ticks every 30 seconds.
         let mut timer = interval(Duration::from_secs(30));
 
@@ -119,7 +120,7 @@ impl StateReconciler {
 
             // Execute the core reconciliation logic.
             if let Err(e) = self.run_reconciliation().await {
-                eprintln!("[RECONCILER-ERROR] An error occurred during the reconciliation check: {:?}", e);
+                tracing::error!(error = ?e, "[RECONCILER-ERROR] An error occurred during the reconciliation check.");
             }
         }
     }

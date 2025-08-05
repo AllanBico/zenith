@@ -21,11 +21,20 @@ use std::ops::Add;
 use std::path::PathBuf;
 use std::sync::Arc;
 use uuid::Uuid;
+use tracing;
 use analyzer::Analyzer;
 use wfo::WfoEngine;
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Load configuration first to get logging settings
+    let config = configuration::load_config(None)?;
+    
+    // --- TRACING INITIALIZATION ---
+    // Initialize tracing based on the configuration file settings
+    configuration::init_tracing(&config.logging)?;
+    // --- END INITIALIZATION ---
+
     dotenvy::dotenv().expect(".env file not found");
 
     // Note: DB connection is now handled by the commands that need it.
@@ -167,8 +176,8 @@ async fn handle_run(args: RunArgs) -> Result<()> {
     let (executor, api_client): (Arc<dyn executor::Executor>, Arc<dyn ApiClient>) =
         match args.mode {
             ExecutionMode::Paper => {
-                println!("[INFO] INITIALIZING IN PAPER TRADING MODE");
-                println!("[INFO] >> Live data feed | Simulated local execution <<");
+                tracing::info!("INITIALIZING IN PAPER TRADING MODE");
+                tracing::info!(">> Live data feed | Simulated local execution <<");
 
                 // In Paper mode, the executor is the SIMULATED one.
                 let simulated_executor = Arc::new(SimulatedExecutor::new(base_config.simulation.clone()));
@@ -179,8 +188,8 @@ async fn handle_run(args: RunArgs) -> Result<()> {
                 (simulated_executor, api_client)
             }
             ExecutionMode::Testnet => {
-                println!("[WARN] INITIALIZING IN TESTNET TRADING MODE");
-                println!("[WARN] >> Live data feed | REAL orders sent to Binance TESTNET <<");
+                tracing::warn!("INITIALIZING IN TESTNET TRADING MODE");
+                tracing::warn!(">> Live data feed | REAL orders sent to Binance TESTNET <<");
 
                 // In Testnet mode, the executor is the LIVE one, pointing to the Testnet API client.
                 let binance_client = BinanceClient::new(false, &base_config.api); // false = Testnet
@@ -190,10 +199,10 @@ async fn handle_run(args: RunArgs) -> Result<()> {
                 (live_executor, api_client)
             }
             ExecutionMode::Live => {
-                println!("\n!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
-                println!("[CRITICAL] INITIALIZING IN LIVE TRADING MODE");
-                println!("[CRITICAL] >> REAL MONEY IS AT RISK. PROCEED WITH CAUTION. <<");
-                println!("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n");
+                tracing::error!("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
+                tracing::error!("INITIALIZING IN LIVE TRADING MODE");
+                tracing::error!(">> REAL MONEY IS AT RISK. PROCEED WITH CAUTION. <<");
+                tracing::error!("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
 
                 // OBEY THE MASTER SAFETY SWITCH
                 if !live_config.live_trading_enabled {
@@ -206,7 +215,7 @@ async fn handle_run(args: RunArgs) -> Result<()> {
                 let live_executor = Arc::new(LiveExecutor::new(Arc::clone(&api_client)));
 
                 // Add a 5-second countdown to allow the user to abort.
-                println!("Starting in 5 seconds... Press Ctrl+C to cancel.");
+                tracing::info!("Starting in 5 seconds... Press Ctrl+C to cancel.");
                 tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
 
                 (live_executor, api_client)
@@ -229,7 +238,7 @@ async fn handle_run(args: RunArgs) -> Result<()> {
 
     engine.run().await?;
     
-    println!("Engine has stopped.");
+    tracing::info!("Engine has stopped.");
     Ok(())
 }
 
@@ -242,7 +251,7 @@ async fn handle_backfill(args: BackfillArgs) -> Result<()> {
     run_migrations(&db_pool).await?;
     let db_repo = DbRepository::new(db_pool);
     // ... rest of the function ...
-    println!(
+    tracing::info!(
         "Starting backfill for {} on interval {} from {} to {}",
         args.symbol, args.from, args.interval, args.to
     );
@@ -288,7 +297,7 @@ async fn handle_backfill(args: BackfillArgs) -> Result<()> {
 
     for result in results {
         if let Err(e) = result {
-            eprintln!("A task failed: {}", e);
+            tracing::error!(error = %e, "A task failed.");
         }
     }
 
@@ -296,11 +305,11 @@ async fn handle_backfill(args: BackfillArgs) -> Result<()> {
 }
 
 async fn handle_portfolio_run(args: PortfolioRunArgs) -> Result<()> {
-    println!("---===[ Starting Portfolio-Level Backtest ]===---");
+    tracing::info!("---===[ Starting Portfolio-Level Backtest ]===---");
 
     let base_config = load_config(None)?;
     let portfolio_config = load_portfolio_config(&args.portfolio)?;
-    println!("Loaded portfolio definition with {} bots.", portfolio_config.bots.len());
+    tracing::info!("Loaded portfolio definition with {} bots.", portfolio_config.bots.len());
 
     let db_pool = connect().await?;
     run_migrations(&db_pool).await?;
@@ -313,7 +322,7 @@ async fn handle_portfolio_run(args: PortfolioRunArgs) -> Result<()> {
     let start_date = args.from.unwrap_or(base_config.backtest.start_date);
     let end_date = args.to.unwrap_or(base_config.backtest.end_date);
     let interval = &base_config.backtest.interval;
-    println!("Loading and merging data from {} to {}...", start_date, end_date);
+    tracing::info!("Loading and merging data from {} to {}...", start_date, end_date);
     let event_stream = load_and_prepare_data(
         &portfolio_config,
         &db_repo,
@@ -321,7 +330,7 @@ async fn handle_portfolio_run(args: PortfolioRunArgs) -> Result<()> {
         start_date.and_hms_opt(0,0,0).unwrap().and_local_timezone(Utc).unwrap(),
         end_date.and_hms_opt(23,59,59).unwrap().and_local_timezone(Utc).unwrap(),
     ).await?;
-    println!("Master event stream created with {} events.", event_stream.len());
+    tracing::info!("Master event stream created with {} events.", event_stream.len());
 
     let mut strategies = HashMap::<String, Box<dyn strategies::Strategy>>::new();
     for bot_config in portfolio_config.bots {
@@ -340,8 +349,8 @@ async fn handle_portfolio_run(args: PortfolioRunArgs) -> Result<()> {
     
     let report = manager.run(event_stream).await?;
 
-    println!("\n---===[ Portfolio Backtest Report ]===---");
-    println!("{:#?}", report);
+    tracing::info!("---===[ Portfolio Backtest Report ]===---");
+    tracing::info!("{:#?}", report);
     
     Ok(())
 }
@@ -370,7 +379,7 @@ fn create_strategy_from_portfolio_config(
     Ok(create_strategy(bot_config.strategy_id, &temp_config, &bot_config.symbol)?)
 }
 async fn handle_wfo(args: WfoArgs) -> Result<()> {
-    println!("---===[ Starting Walk-Forward Optimization Job ]===---");
+    tracing::info!("---===[ Starting Walk-Forward Optimization Job ]===---");
 
     let base_config = load_config(None)?;
     let optimizer_config = load_optimizer_config(&args.config)?;
@@ -395,7 +404,7 @@ async fn handle_wfo(args: WfoArgs) -> Result<()> {
     Ok(())
 }
 async fn handle_analyze(args: AnalyzeArgs) -> Result<()> {
-    println!("---===[ Analyzing Optimization Job: {} ]===---", args.job_id);
+    tracing::info!("---===[ Analyzing Optimization Job: {} ]===---", args.job_id);
 
     let optimizer_config = load_optimizer_config(&args.config)?;
     let db_pool = connect().await?;
@@ -406,7 +415,7 @@ async fn handle_analyze(args: AnalyzeArgs) -> Result<()> {
     let ranked_reports = analyzer.run(&db_repo, args.job_id).await?;
 
     if ranked_reports.is_empty() {
-        println!("No reports found for this job, or all were filtered out.");
+        tracing::warn!("No reports found for this job, or all were filtered out.");
         return Ok(());
     }
 
@@ -431,16 +440,16 @@ async fn handle_analyze(args: AnalyzeArgs) -> Result<()> {
         ]);
     }
 
-    println!("{table}");
+    tracing::info!("{table}");
     Ok(())
 }
 async fn handle_optimize(args: OptimizeArgs) -> Result<()> {
-    println!("---===[ Starting Optimization Job ]===---");
+    tracing::info!("---===[ Starting Optimization Job ]===---");
 
-    println!("Loading base configuration from config.toml...");
+    tracing::info!("Loading base configuration from config.toml...");
     let base_config = load_config(None)?;
     
-    println!("Loading optimization job from: {:?}", &args.config);
+    tracing::info!("Loading optimization job from: {:?}", &args.config);
     let optimizer_config = load_optimizer_config(&args.config)?;
 
     let db_pool = connect().await?;
@@ -451,7 +460,7 @@ async fn handle_optimize(args: OptimizeArgs) -> Result<()> {
     
     optimizer.run().await?;
     
-    println!("\nOptimization process finished.");
+    tracing::info!("Optimization process finished.");
     Ok(())
 }
 /// Generates parameters for a strategy based on the configuration.
@@ -498,7 +507,7 @@ async fn handle_single_run(args: SingleRunArgs) -> Result<()> {
     run_migrations(&db_pool).await?;
     let db_repo = DbRepository::new(db_pool);
 
-    println!("---===[ Starting Single Backtest Run ]===---");
+    tracing::info!("---===[ Starting Single Backtest Run ]===---");
 
     let job_id = Uuid::new_v4();
     let run_id = Uuid::new_v4();
@@ -514,7 +523,7 @@ async fn handle_single_run(args: SingleRunArgs) -> Result<()> {
     ).await?;
     
     db_repo.save_backtest_run(run_id, job_id, &params, "Pending").await?;
-    println!("Created database record for Run ID: {}", run_id);
+    tracing::info!("Created database record for Run ID: {}", run_id);
 
     let backtest_config = config.backtest.clone();
     let start_date = args.from.unwrap_or(backtest_config.start_date);
@@ -522,15 +531,15 @@ async fn handle_single_run(args: SingleRunArgs) -> Result<()> {
     let symbol = backtest_config.symbol.clone();
     let interval = backtest_config.interval.clone();
 
-    println!("Period: {} to {}", start_date, end_date);
-    println!("Symbol: {}, Interval: {}", symbol, interval);
+    tracing::info!("Period: {} to {}", start_date, end_date);
+    tracing::info!("Symbol: {}, Interval: {}", symbol, interval);
 
     let analytics_engine = analytics::AnalyticsEngine::new();
     let portfolio = Portfolio::new(backtest_config.initial_capital);
     let executor = Box::new(SimulatedExecutor::new(config.simulation.clone()));
     let risk_manager = Box::new(SimpleRiskManager::new(config.risk_management.clone())?);
     let strategy = create_strategy(strategy_id, &config, &config.backtest.symbol)?;
-    println!("Strategy: {:?}", strategy_id);
+    tracing::info!("Strategy: {:?}", strategy_id);
 
     let mut backtester = Backtester::new(
         run_id,
@@ -553,13 +562,13 @@ async fn handle_single_run(args: SingleRunArgs) -> Result<()> {
     match report_result {
         Ok(report) => {
             db_repo.update_run_status(run_id, "Completed").await?;
-            println!("\n---===[ Backtest Report (Run ID: {}) ]===---", run_id);
-            println!("{:#?}", report);
+            tracing::info!("---===[ Backtest Report (Run ID: {}) ]===---", run_id);
+            tracing::info!("{:#?}", report);
         }
         Err(e) => {
             db_repo.update_run_status(run_id, "Failed").await?;
-            eprintln!("\n---===[ Backtest Failed (Run ID: {}) ]===---", run_id);
-            eprintln!("Error: {:?}", e);
+            tracing::error!(run_id = %run_id, "Backtest Failed.");
+            tracing::error!(error = ?e, "Error.");
         }
     }
 

@@ -30,3 +30,5 @@ rust_decimal = "1.35"
 
 # For generating unique IDs if ever needed.
 uuid = { version = "1.8", features = ["v4", "serde"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }

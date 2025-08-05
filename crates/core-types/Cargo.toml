@@ -24,3 +24,5 @@ thiserror = "1.0"
 
 # For database support in the core types.
 sqlx = { version = "0.8", features = ["postgres", "chrono", "rust_decimal", "uuid", "json"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }

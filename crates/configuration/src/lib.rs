@@ -13,7 +13,7 @@ pub mod settings;
 pub use settings::{
     ExecutionMode, // <-- EXPORT THE NEW ENUM
     LiveBotConfig, LiveConfig,Config, FundingRateArbParams, MACrossoverParams, ProbReversionParams, RiskManagement,PortfolioBotConfig, PortfolioConfig,
-    Simulation, Strategies, SuperTrendParams,
+    Simulation, Strategies, SuperTrendParams, LoggingConfig,
 };
 
 /// Loads the application configuration from the specified path.
@@ -30,8 +30,8 @@ pub use settings::{
 ///
 /// let config = load_config(Some("path/to/config.toml"));
 /// match config {
-///     Ok(cfg) => println!("Configuration loaded successfully: {:?}", cfg),
-///     Err(e) => eprintln!("Failed to load configuration: {}", e),
+///     Ok(cfg) => tracing::info!("Configuration loaded successfully: {:?}", cfg),
+///     Err(e) => tracing::error!("Failed to load configuration: {}", e),
 /// }
 /// ```
 pub fn load_config(config_path: Option<&str>) -> Result<Config, ConfigError> {
@@ -98,6 +98,39 @@ pub fn load_optimizer_config(path: &Path) -> Result<OptimizerConfig, ConfigError
         .add_source(config::File::from(path))
         .build()?;
     builder.try_deserialize::<OptimizerConfig>().map_err(Into::into)
+}
+
+/// Initializes tracing based on the provided logging configuration.
+/// This function should be called early in the application startup.
+pub fn init_tracing(logging_config: &LoggingConfig) -> Result<(), ConfigError> {
+    // Build the environment filter from the config
+    let mut filter = tracing_subscriber::EnvFilter::new(&logging_config.level);
+    
+    // Add custom overrides
+    for override_rule in &logging_config.overrides {
+        filter = filter.add_directive(
+            override_rule.parse().map_err(|e| {
+                ConfigError::ValidationError(format!("Invalid log override '{}': {}", override_rule, e))
+            })?
+        );
+    }
+    
+    // Build the subscriber with the configured options
+    let mut builder = tracing_subscriber::fmt::Subscriber::builder()
+        .with_env_filter(filter)
+        .with_ansi(logging_config.colored)
+        .with_thread_ids(logging_config.thread_ids)
+        .with_target(logging_config.targets);
+    
+    // Add timer if timestamps are enabled
+    if logging_config.timestamps {
+        builder = builder.with_timer(tracing_subscriber::fmt::time::SystemTime);
+    }
+    
+    // Initialize the subscriber directly
+    builder.init();
+    
+    Ok(())
 }
 
 /// Loads the portfolio configuration from a specific TOML file path.

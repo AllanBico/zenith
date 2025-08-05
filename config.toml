@@ -104,3 +104,35 @@ adx_period = 14
 [strategies.funding_rate_arb]
 target_rate_threshold = 0.001  # e.g., 0.1%
 basis_safety_threshold = 0.005 # e.g., 0.5% basis between spot and perp
+
+# ------------------------------------------------------------------------------
+# Logging Configuration
+#
+# Controls the verbosity and output of application logs.
+# ------------------------------------------------------------------------------
+[logging]
+# The minimum log level to display.
+# Options: "error", "warn", "info", "debug", "trace"
+# Default: "info"
+level = "info"
+
+# Enable colored output for log messages (recommended for terminals).
+# Default: true
+colored = true
+
+# Enable timestamps in log messages.
+# Default: true
+timestamps = true
+
+# Enable thread IDs in log messages (useful for debugging async code).
+# Default: false
+thread_ids = false
+
+# Enable target/module information in log messages.
+# Default: true
+targets = true
+
+# Custom log level overrides for specific modules.
+# Format: "module_name=level"
+# Example: ["zenith::api_client=debug", "zenith::engine=info"]
+overrides = ["sqlx=warn", "zenith::engine=debug"]

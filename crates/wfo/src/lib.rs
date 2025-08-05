@@ -11,6 +11,7 @@ use risk::SimpleRiskManager;
 use analytics; // For AnalyticsEngine
 
 use uuid::Uuid;
+use tracing;
 
 pub mod error;
 
@@ -65,18 +66,18 @@ impl WfoEngine {
         // 2. Generate all the walk-forward periods
         let periods = self.generate_walk_forward_periods(start_date, end_date, wfo_config)?;
 
-        println!("Starting WFO Job {} with {} walk-forward periods.", self.wfo_job_id, periods.len());
+        tracing::info!("Starting WFO Job {} with {} walk-forward periods.", self.wfo_job_id, periods.len());
 
         // 3. Loop through each period and execute the walk
         for (i, period) in periods.iter().enumerate() {
-            println!("\n--- Starting Walk {}/{} ---", i + 1, periods.len());
-            println!("  In-Sample Period: {} -> {}", period.is_start.date_naive(), period.is_end.date_naive());
-            println!("  Out-of-Sample Period: {} -> {}", period.oos_start.date_naive(), period.oos_end.date_naive());
+            tracing::info!("--- Starting Walk {}/{} ---", i + 1, periods.len());
+            tracing::info!("  In-Sample Period: {} -> {}", period.is_start.date_naive(), period.is_end.date_naive());
+            tracing::info!("  Out-of-Sample Period: {} -> {}", period.oos_start.date_naive(), period.oos_end.date_naive());
             
             self.execute_walk(period).await?;
         }
 
-        println!("\n--- WFO Job {} Completed Successfully! ---", self.wfo_job_id);
+        tracing::info!("--- WFO Job {} Completed Successfully! ---", self.wfo_job_id);
         Ok(())
     }
 
@@ -106,7 +107,7 @@ impl WfoEngine {
             end: period.is_end.to_string(),
         })?;
         let best_params = best_run.report.parameters.clone();
-        println!("  Found best IS params: {}", best_params);
+        tracing::info!("  Found best IS params: {}", best_params);
 
         // C. Run Out-of-Sample Backtest with the best parameters
         let oos_run_id = Uuid::new_v4();
@@ -136,7 +137,7 @@ impl WfoEngine {
         
         oos_backtester.run(period.oos_start, period.oos_end).await?;
         self.db_repo.update_run_status(oos_run_id, "Completed").await?;
-        println!("  Completed OOS backtest for Run ID: {}", oos_run_id);
+        tracing::info!("  Completed OOS backtest for Run ID: {}", oos_run_id);
         
         // D. Save the WFO run record, linking everything together
         self.db_repo.save_wfo_run(

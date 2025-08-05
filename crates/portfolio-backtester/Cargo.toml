@@ -44,3 +44,6 @@ uuid = { version = "1.8", features = ["v4"] }
 
 # For async utilities like join_all.
 futures = "0.3"
+
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }

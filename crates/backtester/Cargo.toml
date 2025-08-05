@@ -43,3 +43,5 @@ rust_decimal = "1.35"
 # For handling the backtest period dates.
 chrono = "0.4"
 
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }

@@ -1,4 +1,5 @@
 use crate::error::EngineError;
+use tracing;
 use api_client::{ApiClient, LiveConnector}; // LiveConnector is needed here now
 use configuration::{Config, LiveConfig};
 use database::DbRepository;
@@ -93,34 +94,34 @@ impl LiveEngine {
     /// Initializes the engine to a ready state for live trading.
     /// This is the primary setup function that must be called before `run`.
     pub async fn init(&mut self) -> Result<(), EngineError> {
-        println!("Initializing trading engine...");
+        tracing::info!("Initializing trading engine...");
 
         // 1. Synchronize Portfolio State with the Exchange
         self.sync_portfolio_state().await?;
-        println!("Portfolio state synchronized with exchange.");
+        tracing::info!("Portfolio state synchronized with exchange.");
 
         // 2. Populate Bots from Configuration
         self.populate_bots()?;
-        println!("Loaded {} active bots.", self.bots.len());
+        tracing::info!("Loaded {} active bots.", self.bots.len());
         
         // 3. Set Leverage for all active symbols
         for symbol in self.bots.keys() {
-            println!("Setting leverage for {}...", symbol);
+            tracing::info!("Setting leverage for {}...", symbol);
             // We'll use a hardcoded leverage for now. This could come from config later.
             self.api_client.set_leverage(symbol, 10).await?;
         }
         
-        println!("Engine initialization complete.");
+        tracing::info!("Engine initialization complete.");
         Ok(())
     }
 
     /// Fetches cash balance and open positions to create an accurate initial portfolio.
     async fn sync_portfolio_state(&mut self) -> Result<(), EngineError> {
-        println!("[DEBUG] Fetching account balance and positions...");
+        tracing::debug!("Fetching account balance and positions...");
         let balances = self.api_client.get_account_balance().await?;
         let positions = self.api_client.get_open_positions().await?;
         
-        println!("[DEBUG] Found {} balance entries and {} open positions", balances.len(), positions.len());
+        tracing::debug!("Found {} balance entries and {} open positions", balances.len(), positions.len());
         
         let mut portfolio = self.portfolio.lock().await;
 
@@ -129,7 +130,7 @@ impl LiveEngine {
             portfolio.cash = usdt_balance.available_balance;
         } else {
             // Handle case where there is no USDT, for now, we'll just log it.
-            println!("Warning: No USDT balance found in account.");
+            tracing::warn!("No USDT balance found in account.");
             portfolio.cash = "0".parse().unwrap();
         }
 
@@ -158,11 +159,11 @@ impl LiveEngine {
                     last_updated: Utc::now(),
                 };
                 portfolio.positions.insert(symbol.clone(), position);
-                println!("[DEBUG] Added position: {} {:?} {:.4} @ {:.2}", 
+                tracing::debug!("Added position: {} {:?} {:.4} @ {:.2}", 
                     symbol, side, pos.position_amt.abs(), pos.entry_price);
             }
         }
-        println!("[DEBUG] Total API positions: {}, Actual open positions: {}", total_positions, open_positions_count);
+        tracing::debug!("Total API positions: {}, Actual open positions: {}", total_positions, open_positions_count);
 
         Ok(())
     }
@@ -171,7 +172,7 @@ impl LiveEngine {
     fn populate_bots(&mut self) -> Result<(), EngineError> {
         for bot_config in &self.live_config.bots {
             if bot_config.enabled {
-                println!("[DEBUG] Loading bot: {} with strategy: {:?}", bot_config.symbol, bot_config.strategy_id);
+                tracing::debug!("Loading bot: {} with strategy: {:?}", bot_config.symbol, bot_config.strategy_id);
                 let mut temp_config = self.base_config.clone();
                 let strategy = crate::util::create_strategy_from_live_config(&mut temp_config, bot_config)?;
                 
@@ -180,9 +181,9 @@ impl LiveEngine {
                     strategy,
                 };
                 self.bots.insert(bot_config.symbol.clone(), bot);
-                println!("[DEBUG] Bot loaded successfully: {}", bot_config.symbol);
+                tracing::debug!("Bot loaded successfully: {}", bot_config.symbol);
             } else {
-                println!("[DEBUG] Skipping disabled bot: {}", bot_config.symbol);
+                tracing::debug!("Skipping disabled bot: {}", bot_config.symbol);
             }
         }
         Ok(())
@@ -194,7 +195,7 @@ impl LiveEngine {
 
         let symbols: Vec<String> = self.bots.keys().cloned().collect();
         if symbols.is_empty() {
-            println!("[WARN] No bots enabled in live.toml. Exiting.");
+            tracing::warn!("No bots enabled in live.toml. Exiting.");
             return Ok(());
         }
         let interval = &self.base_config.backtest.interval;
@@ -211,15 +212,15 @@ impl LiveEngine {
         );
         tokio::spawn(reconciler.start());
         
-        println!("\n--- Engine is running. Subscribed to {} kline streams. Waiting for market data... ---", symbols.len());
+        tracing::info!("Engine is running. Subscribed to {} kline streams. Waiting for market data...", symbols.len());
 
         while let Some((symbol, kline)) = kline_rx.recv().await {
             if let Err(e) = self.process_kline(&symbol, &kline).await {
-                eprintln!("[ERROR] Failed to process kline: {:?}", e);
+                tracing::error!(error = ?e, "Failed to process kline.");
             }
         }
         
-        eprintln!("[ERROR] WebSocket stream ended unexpectedly.");
+        tracing::error!("WebSocket stream ended unexpectedly.");
         Ok(())
     }
 
@@ -228,7 +229,7 @@ impl LiveEngine {
         let bot = self.bots.get_mut(symbol).ok_or_else(|| EngineError::BotNotFound(symbol.to_string()))?;
 
         if let Some(signal) = bot.strategy.evaluate(kline)? {
-            println!("\nSignal generated for {}: {:?} at price {}", bot.symbol, signal.order_request.side, kline.close);
+            tracing::info!("Signal generated for {}: {:?} at price {}", bot.symbol, signal.order_request.side, kline.close);
 
             let portfolio_guard = self.portfolio.lock().await;
             let latest_equity = portfolio_guard.calculate_total_equity(&HashMap::from([(bot.symbol.clone(), kline.close)]))?;
@@ -241,20 +242,20 @@ impl LiveEngine {
             drop(portfolio_guard);
 
             let order_request = self.risk_manager.evaluate_signal(&signal, &portfolio_state, kline.close)?;
-            println!("Risk assessment passed. Final Order: {:?} {} @ Market", order_request.quantity, order_request.symbol);
+            tracing::info!("Risk assessment passed. Final Order: {:?} {} @ Market", order_request.quantity, order_request.symbol);
 
             // --- THE KEY CHANGE IS HERE ---
             // We now call the generic `executor`, not the `api_client`.
             match self.executor.execute(&order_request, kline).await {
                 Ok(execution) => {
-                    println!("SUCCESS: Execution confirmed: {:?}", execution);
+                    tracing::info!("SUCCESS: Execution confirmed: {:?}", execution);
                     // In a real system, we'd wait for a WebSocket confirmation before updating state.
                     // For now, we update our local portfolio optimistically.
                     let mut portfolio = self.portfolio.lock().await;
                     portfolio.update_with_execution(&execution)?;
                 }
                 Err(e) => {
-                    eprintln!("ERROR: Failed to execute order for {}: {:?}", bot.symbol, e);
+                    tracing::error!(symbol = %bot.symbol, error = ?e, "Failed to execute order.");
                 }
             }
         }

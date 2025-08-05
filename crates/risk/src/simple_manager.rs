@@ -5,6 +5,7 @@ use core_types::{OrderRequest, OrderSide, Signal};
 use events::PortfolioState;
 use rust_decimal::Decimal;
 use rust_decimal_macros::dec;
+use tracing;
 
 /// A simple, concrete implementation of the `RiskManager` trait.
 ///
@@ -104,7 +105,7 @@ impl RiskManager for SimpleRiskManager {
         let target_quantity = target_quantity.round_dp(6);
         
         // Debug logging
-        println!("Risk calculation - Entry: {}, Risk Capital: {}, Position Value: {}, Max Allowed: {}, Target Qty: {}",
+        tracing::debug!("Risk calculation - Entry: {}, Risk Capital: {}, Position Value: {}, Max Allowed: {}, Target Qty: {}",
             entry_price, scaled_risk_capital, position_value, max_position_value, target_quantity);
         
         // If we already have a position, calculate how much more to add

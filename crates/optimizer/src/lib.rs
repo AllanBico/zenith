@@ -11,6 +11,7 @@ use rust_decimal::prelude::*;
 use serde_json::Value as JsonValue;
 use strategies::{create_strategy, StrategyId};
 use tokio::runtime::Handle;
+use tracing;
 use uuid::Uuid;
 use chrono::Utc;
 
@@ -51,11 +52,11 @@ impl Optimizer {
         let pending_runs = self.db_repo.get_pending_runs(self.job_id).await?;
         let total_runs = pending_runs.len();
         if total_runs == 0 {
-            println!("No pending runs found for job {}. It may have been completed previously.", self.job_id);
+            tracing::info!("No pending runs found for job {}. It may have been completed previously.", self.job_id);
             return Ok(());
         }
         
-        println!(
+        tracing::info!(
             "Starting optimization job {} with {} pending runs on {} CPU cores.",
             self.job_id,
             total_runs,
@@ -80,7 +81,7 @@ impl Optimizer {
                     let result = handle_clone.block_on(self.execute_single_backtest(run));
 
                     if let Err(e) = result {
-                        eprintln!("A backtest run failed: {:?}", e);
+                        tracing::error!(error = ?e, "A backtest run failed.");
                     }
                     progress_bar_clone.inc(1);
                 });
@@ -89,7 +90,7 @@ impl Optimizer {
         
         progress_bar.finish_with_message("Optimization runs complete.");
 
-        println!("Job {} complete. Run `analyze {}` to see the results.", self.job_id, self.job_id);
+        tracing::info!("Job {} complete. Run `analyze {}` to see the results.", self.job_id, self.job_id);
         
         Ok(())
     }
@@ -152,7 +153,7 @@ impl Optimizer {
                 self.db_repo.update_run_status(run_id, "Completed").await?;
             }
             Err(e) => {
-                eprintln!("Backtest run {} failed: {:?}", run_id, e);
+                tracing::error!(run_id = %run_id, error = ?e, "Backtest run failed.");
                 self.db_repo.update_run_status(run_id, "Failed").await?;
             }
         }

@@ -37,3 +37,5 @@ uuid = { version = "1.8", features = ["v4"] }
 
 # For performing the date slicing logic (e.g., adding weeks to a date).
 chrono = "0.4"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
