@@ -54,8 +54,10 @@ export function TradeHistoryTable({ data }: { data: Trade[] }) {
           <TableHead>Side</TableHead>
           <TableHead>Entry Time</TableHead>
           <TableHead>Exit Time</TableHead>
-          <TableHead className="text-right">Entry Price</TableHead>
-          <TableHead className="text-right">Exit Price</TableHead>
+          <TableHead className="text-right">Entry Price/Unit</TableHead>
+          <TableHead className="text-right">Exit Price/Unit</TableHead>
+          <TableHead className="text-right">Entry Cost</TableHead>
+          <TableHead className="text-right">Exit Value</TableHead>
           <TableHead className="text-right">Quantity</TableHead>
           <TableHead className="text-right">P&L</TableHead>
         </TableRow>
@@ -68,6 +70,10 @@ export function TradeHistoryTable({ data }: { data: Trade[] }) {
             const exitPrice = safeParseFloat(trade.exit_execution.price);
             const qty = safeParseFloat(trade.entry_execution.quantity);
             
+            // Calculate actual costs
+            const entryCost = entryPrice * qty;
+            const exitValue = exitPrice * qty;
+            
             return (
                 <TableRow key={trade.trade_id || index}>
                     <TableCell>
@@ -77,9 +83,11 @@ export function TradeHistoryTable({ data }: { data: Trade[] }) {
                     </TableCell>
                     <TableCell>{formatTimestamp(trade.entry_execution.timestamp)}</TableCell>
                     <TableCell>{formatTimestamp(trade.exit_execution.timestamp)}</TableCell>
-                    <TableCell className="text-right font-mono">{entryPrice.toFixed(2)}</TableCell>
-                    <TableCell className="text-right font-mono">{exitPrice.toFixed(2)}</TableCell>
-                    <TableCell className="text-right font-mono">{qty.toFixed(4)}</TableCell>
+                    <TableCell className="text-right font-mono">${entryPrice.toFixed(2)}</TableCell>
+                    <TableCell className="text-right font-mono">${exitPrice.toFixed(2)}</TableCell>
+                    <TableCell className="text-right font-mono">${entryCost.toFixed(2)}</TableCell>
+                    <TableCell className="text-right font-mono">${exitValue.toFixed(2)}</TableCell>
+                    <TableCell className="text-right font-mono">{qty.toFixed(6)}</TableCell>
                     <TableCell className={`text-right font-mono ${pnl >= 0 ? 'text-green-500' : 'text-red-500'}`}>
                         ${pnl.toFixed(2)}
                     </TableCell>

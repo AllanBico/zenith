@@ -1,19 +1,76 @@
 # ==============================================================================
 # Zenith Optimizer Job Configuration
 # ==============================================================================
+# 
+# This file supports optimization for ALL available strategies:
+# - MACrossover: Moving Average Crossover strategy
+# - SuperTrend: SuperTrend with ADX filter
+# - ProbReversion: Probabilistic Mean Reversion
+# - FundingRateArb: Funding Rate Arbitrage
+#
+# To use a specific strategy, set the strategy_id in base_config and ensure
+# the corresponding parameter_space section is uncommented below.
 
 # --- Base Settings ---
 # Defines the core context for the optimization job.
 [base_config]
-strategy_id = "MACrossover"
+# Choose one of: "MACrossover", "SuperTrend", "ProbReversion", "FundingRateArb"
+strategy_id = "ProbReversion"
 symbol = "BTCUSDT"
 interval = "15m"
 
-# --- Parameter Space ---
-# Defines the ranges of parameters to be tested.
+# ==============================================================================
+# Parameter Spaces for Each Strategy
+# ==============================================================================
+# 
+# Uncomment the parameter_space section for the strategy you want to optimize.
+# Only ONE parameter_space section should be active at a time.
+
+# --- MACrossover Strategy Parameters ---
+# [parameter_space]
+# The fast MA period should be short but not too noisy; the slow MA should be long enough to capture trend.
+# These ranges are realistic for crypto 1m charts and avoid hardcoding a single value.
+# ma_fast_period = { start = 1, end = 20, step = 1 }
+# ma_slow_period = { start = 21, end = 100, step = 3 }
+# trend_filter_period = { start = 50, end = 200, step = 10 }
+
+# --- SuperTrend Strategy Parameters ---
+# [parameter_space]
+# # ATR period for volatility calculation (typical range: 7-21 for crypto, but can be wider for optimization)
+# atr_period = { start = 7, end = 30, step = 1 }
+# # ATR multiplier for SuperTrend calculation (commonly 2-4, but wider range for optimization)
+# atr_multiplier = { start = 1.0, end = 6.0, step = 0.1 }
+# # ADX threshold for trend strength filter (10-50 is reasonable for filtering weak trends)
+# adx_threshold = { start = 10, end = 50, step = 1 }
+# # ADX period for trend strength calculation (10-50 is common, but up to 300 for experimentation)
+# adx_period = { start = 10, end = 300, step = 5 }
+# 
+# These ranges are not hardcoded to a single value and are broad enough for robust optimization.
+# Adjust ranges as needed based on asset volatility and backtest performance.
+
+# --- ProbReversion Strategy Parameters ---
 [parameter_space]
-ma_fast_period = [5, 8, 10, 12, 15]
-ma_slow_period = { start = 20, end = 60, step = 5 }
+# Bollinger Bands period
+bb_period = { start = 15, end = 30, step = 5 }
+# Bollinger Bands standard deviation
+bb_std_dev = { start = 1.5, end = 3.0, step = 0.5 }
+# RSI period
+rsi_period = { start = 10, end = 20, step = 2 }
+# RSI oversold threshold
+rsi_oversold = { start = 20, end = 35, step = 5 }
+# RSI overbought threshold
+rsi_overbought = { start = 65, end = 80, step = 5 }
+# ADX threshold for ranging market confirmation
+adx_threshold = { start = 15, end = 25, step = 5 }
+# ADX period
+adx_period = { start = 10, end = 20, step = 2 }
+
+# --- Funding Rate Arbitrage Parameters ---
+# [parameter_space]
+# Target funding rate threshold
+# target_rate_threshold = { start = 0.0005, end = 0.002, step = 0.0005 }
+# Basis safety threshold between spot and perpetual
+# basis_safety_threshold = { start = 0.003, end = 0.008, step = 0.001 }
 
 # ==============================================================================
 # Analysis & Ranking Configuration

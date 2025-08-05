@@ -17,6 +17,7 @@ use uuid::Uuid;
 /// 3. Market Regime: ADX is low, indicating a ranging (non-trending) market.
 pub struct ProbReversion {
     params: ProbReversionParams,
+    symbol: String,
     bb: BollingerBands,
     rsi: Rsi,
     atr: AverageTrueRange,  // Using ATR as a trend strength indicator
@@ -25,7 +26,7 @@ pub struct ProbReversion {
 
 impl ProbReversion {
     /// Creates a new `ProbReversion` instance.
-    pub fn new(params: ProbReversionParams) -> Result<Self, StrategyError> {
+    pub fn new(params: ProbReversionParams, symbol: String) -> Result<Self, StrategyError> {
         if params.bb_period == 0 || params.rsi_period == 0 || params.adx_period == 0 {
             return Err(StrategyError::InvalidParameters(
                 "Indicator periods cannot be zero".to_string(),
@@ -44,6 +45,7 @@ impl ProbReversion {
                 StrategyError::InvalidParameters(format!("Failed to initialize ATR: {:?}", e))
             )?,
             params,
+            symbol,
             prev_close: 0.0,
         })
     }
@@ -106,10 +108,10 @@ impl Strategy for ProbReversion {
                     confidence: dec!(1.0),
                     order_request: OrderRequest {
                         client_order_id: Uuid::new_v4(),
-                        symbol: "placeholder".to_string(),
+                        symbol: self.symbol.clone(),
                         side: OrderSide::Buy,
                         order_type: OrderType::Market,
-                        quantity: dec!(1.0),
+                        quantity: Decimal::ZERO, // Let the risk manager determine the size
                         price: None,
                         position_side: None, // Will be set by engine
                     },
@@ -122,10 +124,10 @@ impl Strategy for ProbReversion {
                     confidence: dec!(1.0),
                     order_request: OrderRequest {
                         client_order_id: Uuid::new_v4(),
-                        symbol: "placeholder".to_string(),
+                        symbol: self.symbol.clone(),
                         side: OrderSide::Sell,
                         order_type: OrderType::Market,
-                        quantity: dec!(1.0),
+                        quantity: Decimal::ZERO, // Let the risk manager determine the size
                         price: None,
                         position_side: None, // Will be set by engine
                     },

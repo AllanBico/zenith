@@ -23,11 +23,11 @@ pub fn create_strategy(
         }
         StrategyId::SuperTrend => {
             let params = config.strategies.super_trend.clone();
-            Ok(Box::new(SuperTrend::new(params)?))
+            Ok(Box::new(SuperTrend::new(params, symbol.to_string())?))
         }
         StrategyId::ProbReversion => {
             let params = config.strategies.prob_reversion.clone();
-            Ok(Box::new(ProbReversion::new(params)?))
+            Ok(Box::new(ProbReversion::new(params, symbol.to_string())?))
         }
         StrategyId::FundingRateArb => { // <-- ADD THIS BLOCK
             let params = config.strategies.funding_rate_arb.clone();

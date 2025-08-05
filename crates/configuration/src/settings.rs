@@ -33,6 +33,8 @@ pub struct ApiKeys {
 /// Contains parameters for a single backtest run.
 #[derive(Debug, Clone, Deserialize)]
 pub struct Backtest {
+    /// The strategy to use for the backtest.
+    pub strategy_id: StrategyId,
     /// The symbol to use for the backtest (e.g., "BTCUSDT").
     pub symbol: String,
     /// The timeframe interval to use (e.g., "1h").

@@ -6,6 +6,8 @@ use database::{DbBacktestRun, DbRepository};
 use executor::{Portfolio, SimulatedExecutor};
 use indicatif::{ProgressBar, ProgressStyle};
 use risk::SimpleRiskManager;
+use rust_decimal::Decimal;
+use rust_decimal::prelude::*;
 use serde_json::Value as JsonValue;
 use strategies::{create_strategy, StrategyId};
 use tokio::runtime::Handle;
@@ -129,6 +131,7 @@ impl Optimizer {
             run_id, // <-- PASS THE RUN ID
             self.config.base_config.symbol.clone(),
             self.config.base_config.interval.clone(),
+            self.base_config.clone(), // Pass the full config for stop-loss access
             portfolio,
             strategy,
             risk_manager,
@@ -157,6 +160,16 @@ impl Optimizer {
         Ok(())
     }
 
+    fn parse_decimal_param(val: &JsonValue, param_name: &str) -> Result<Decimal, OptimizerError> {
+        if let Some(f64_val) = val.as_f64() {
+            Decimal::from_f64(f64_val)
+        } else if let Some(str_val) = val.as_str() {
+            str_val.parse::<Decimal>().ok()
+        } else {
+            None
+        }.ok_or_else(|| OptimizerError::ParameterGeneration(format!("Cannot parse {}: {:?}", param_name, val)))
+    }
+
     pub fn create_strategy_instance(&self, optimized_params: &JsonValue) -> Result<Box<dyn strategies::Strategy>, OptimizerError> {
         let strategy_id = self.config.base_config.strategy_id;
         let mut temp_config = self.base_config.clone();
@@ -166,11 +179,68 @@ impl Optimizer {
         match strategy_id {
             StrategyId::MACrossover => {
                 let mut p = temp_config.strategies.ma_crossover.clone();
-                if let Some(val) = params_map.get("ma_fast_period") { p.ma_fast_period = val.as_u64().unwrap() as usize; }
-                if let Some(val) = params_map.get("ma_slow_period") { p.ma_slow_period = val.as_u64().unwrap() as usize; }
+                if let Some(val) = params_map.get("ma_fast_period") { 
+                    p.ma_fast_period = val.as_u64().ok_or_else(|| OptimizerError::ParameterGeneration("Invalid ma_fast_period".to_string()))? as usize; 
+                }
+                if let Some(val) = params_map.get("ma_slow_period") { 
+                    p.ma_slow_period = val.as_u64().ok_or_else(|| OptimizerError::ParameterGeneration("Invalid ma_slow_period".to_string()))? as usize; 
+                }
+                if let Some(val) = params_map.get("trend_filter_period") { 
+                    p.trend_filter_period = val.as_u64().ok_or_else(|| OptimizerError::ParameterGeneration("Invalid trend_filter_period".to_string()))? as usize; 
+                }
                 temp_config.strategies.ma_crossover = p;
             },
-            _ => return Err(OptimizerError::Strategy(strategies::StrategyError::StrategyNotFound("Cannot optimize this strategy yet".to_string()))),
+            StrategyId::SuperTrend => {
+                let mut p = temp_config.strategies.super_trend.clone();
+                if let Some(val) = params_map.get("atr_period") { 
+                    p.atr_period = val.as_u64().ok_or_else(|| OptimizerError::ParameterGeneration("Invalid atr_period".to_string()))? as usize; 
+                }
+                if let Some(val) = params_map.get("atr_multiplier") { 
+                    p.atr_multiplier = Self::parse_decimal_param(val, "atr_multiplier")?;
+                }
+                if let Some(val) = params_map.get("adx_threshold") { 
+                    p.adx_threshold = Self::parse_decimal_param(val, "adx_threshold")?;
+                }
+                if let Some(val) = params_map.get("adx_period") { 
+                    p.adx_period = val.as_u64().ok_or_else(|| OptimizerError::ParameterGeneration("Invalid adx_period".to_string()))? as usize; 
+                }
+                temp_config.strategies.super_trend = p;
+            },
+            StrategyId::ProbReversion => {
+                let mut p = temp_config.strategies.prob_reversion.clone();
+                if let Some(val) = params_map.get("bb_period") { 
+                    p.bb_period = val.as_u64().ok_or_else(|| OptimizerError::ParameterGeneration("Invalid bb_period".to_string()))? as usize; 
+                }
+                if let Some(val) = params_map.get("bb_std_dev") { 
+                    p.bb_std_dev = Self::parse_decimal_param(val, "bb_std_dev")?;
+                }
+                if let Some(val) = params_map.get("rsi_period") { 
+                    p.rsi_period = val.as_u64().ok_or_else(|| OptimizerError::ParameterGeneration("Invalid rsi_period".to_string()))? as usize; 
+                }
+                if let Some(val) = params_map.get("rsi_oversold") { 
+                    p.rsi_oversold = Self::parse_decimal_param(val, "rsi_oversold")?;
+                }
+                if let Some(val) = params_map.get("rsi_overbought") { 
+                    p.rsi_overbought = Self::parse_decimal_param(val, "rsi_overbought")?;
+                }
+                if let Some(val) = params_map.get("adx_threshold") { 
+                    p.adx_threshold = Self::parse_decimal_param(val, "adx_threshold")?;
+                }
+                if let Some(val) = params_map.get("adx_period") { 
+                    p.adx_period = val.as_u64().ok_or_else(|| OptimizerError::ParameterGeneration("Invalid adx_period".to_string()))? as usize; 
+                }
+                temp_config.strategies.prob_reversion = p;
+            },
+            StrategyId::FundingRateArb => {
+                let mut p = temp_config.strategies.funding_rate_arb.clone();
+                if let Some(val) = params_map.get("target_rate_threshold") { 
+                    p.target_rate_threshold = Self::parse_decimal_param(val, "target_rate_threshold")?;
+                }
+                if let Some(val) = params_map.get("basis_safety_threshold") { 
+                    p.basis_safety_threshold = Self::parse_decimal_param(val, "basis_safety_threshold")?;
+                }
+                temp_config.strategies.funding_rate_arb = p;
+            },
         }
         
         Ok(create_strategy(strategy_id, &temp_config, &self.config.base_config.symbol)?)

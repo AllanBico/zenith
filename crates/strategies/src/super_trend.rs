@@ -9,18 +9,19 @@ use crate::error::StrategyError;
 use crate::Strategy;
 use configuration::settings::SuperTrendParams;
 
-/// The SuperTrend strategy with an ATR filter for trend strength.
+/// The SuperTrend strategy with an ATR-based trend strength filter.
 pub struct SuperTrend {
     params: SuperTrendParams,
+    symbol: String,
     atr: AverageTrueRange,
-    // Track the current upper and lower bands
-    upper_band: f64,
-    lower_band: f64,
-    // State: The direction of the trend on the previous bar to detect a "flip".
-    prev_trend: Option<Trend>,
+    // Track the current SuperTrend value and direction
+    supertrend_value: f64,
+    trend_direction: Option<Trend>,
+    // Previous close for trend detection
+    prev_close: Option<f64>,
 }
 
-/// Represents the direction of the trend
+/// Represents the direction of the SuperTrend
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Trend {
     Up,
@@ -29,10 +30,10 @@ pub enum Trend {
 
 impl SuperTrend {
     /// Creates a new `SuperTrend` instance.
-    pub fn new(params: SuperTrendParams) -> Result<Self, StrategyError> {
-        if params.atr_period == 0 || params.adx_period == 0 {
+    pub fn new(params: SuperTrendParams, symbol: String) -> Result<Self, StrategyError> {
+        if params.atr_period == 0 {
             return Err(StrategyError::InvalidParameters(
-                "Indicator periods cannot be zero".to_string(),
+                "ATR period cannot be zero".to_string(),
             ));
         }
 
@@ -41,15 +42,16 @@ impl SuperTrend {
                 StrategyError::InvalidParameters(format!("Failed to initialize ATR: {:?}", e))
             })?,
             params,
-            upper_band: 0.0,
-            lower_band: 0.0,
-            prev_trend: None,
+            symbol,
+            supertrend_value: 0.0,
+            trend_direction: None,
+            prev_close: None,
         })
     }
     
-    /// Calculate the SuperTrend indicator values
-    fn calculate_bands(&mut self, high: f64, low: f64, close: f64) -> (f64, f64, Trend) {
-        // Update ATR
+    /// Calculate the SuperTrend indicator value
+    fn calculate_supertrend(&mut self, high: f64, low: f64, close: f64) -> (f64, Trend) {
+        // Calculate ATR
         let atr = self.atr.next(close);
         
         // Calculate basic upper and lower bands
@@ -58,24 +60,52 @@ impl SuperTrend {
         let basic_upper = hl2 + (atr_multiplier * atr);
         let basic_lower = hl2 - (atr_multiplier * atr);
         
-        // Update final bands based on previous trend
-        let (upper_band, lower_band, trend) = match self.prev_trend {
+        // Determine trend direction and SuperTrend value
+        let (supertrend_value, trend) = match self.trend_direction {
             Some(Trend::Up) => {
-                let new_lower = basic_lower.max(self.lower_band);
-                (basic_upper, new_lower, Trend::Up)
+                if close <= self.supertrend_value {
+                    // Trend flipped to down
+                    (basic_lower, Trend::Down)
+                } else {
+                    // Continue up trend
+                    (basic_lower.max(self.supertrend_value), Trend::Up)
+                }
             }
             Some(Trend::Down) => {
-                let new_upper = basic_upper.min(self.upper_band);
-                (new_upper, basic_lower, Trend::Down)
+                if close >= self.supertrend_value {
+                    // Trend flipped to up
+                    (basic_upper, Trend::Up)
+                } else {
+                    // Continue down trend
+                    (basic_upper.min(self.supertrend_value), Trend::Down)
+                }
             }
-            None => (basic_upper, basic_lower, Trend::Up), // Default to Up trend
+            None => {
+                // Initialize on first run
+                if close > basic_upper {
+                    (basic_lower, Trend::Up)
+                } else {
+                    (basic_upper, Trend::Down)
+                }
+            }
         };
         
         // Update state
-        self.upper_band = upper_band;
-        self.lower_band = lower_band;
+        self.supertrend_value = supertrend_value;
         
-        (upper_band, lower_band, trend)
+        (supertrend_value, trend)
+    }
+    
+    /// Check if trend strength is sufficient using ATR
+    fn is_trend_strong(&mut self, high: f64, low: f64, close: f64) -> bool {
+        // Calculate ATR
+        let atr = self.atr.next(close);
+        
+        // Check if ATR is above a minimum threshold (indicating sufficient volatility)
+        // Use a much lower percentage to allow more trades
+        let volatility_threshold = close * 0.001; // 0.1% of close price (reduced from 0.5%)
+        
+        atr >= volatility_threshold
     }
 }
 
@@ -93,58 +123,55 @@ impl Strategy for SuperTrend {
         })?;
 
         // Calculate SuperTrend values
-        let (_upper_band, _lower_band, current_trend) = self.calculate_bands(high, low, close);
+        let (_supertrend_value, current_trend) = self.calculate_supertrend(high, low, close);
         
-        // Calculate trend strength based on ATR
-        let atr = self.atr.next(close);
-        let is_trend_strong = atr > (close * 0.01); // Simple trend strength check
+        // Check trend strength using ADX
+        let is_trend_strong = self.is_trend_strong(high, low, close);
 
         let mut signal = None;
 
-        // Ensure we have a previous trend to compare against for a flip
-        if let Some(prev_trend) = self.prev_trend {
+        // Detect trend changes and generate signals
+        if let Some(prev_trend) = self.trend_direction {
             // Trend Flip Detection: Did the trend just change direction on this bar?
             let is_bullish_flip = prev_trend == Trend::Down && current_trend == Trend::Up;
             let is_bearish_flip = prev_trend == Trend::Up && current_trend == Trend::Down;
 
-            if is_bullish_flip && is_trend_strong {
+            if is_bullish_flip {
                 signal = Some(Signal {
                     signal_id: Uuid::new_v4(),
                     timestamp: kline.close_time,
                     confidence: dec!(1.0),
                     order_request: OrderRequest {
                         client_order_id: Uuid::new_v4(),
-                        symbol: "placeholder".to_string(),
+                        symbol: self.symbol.clone(),
                         side: OrderSide::Buy,
                         order_type: OrderType::Market,
-                        quantity: dec!(1.0),
+                        quantity: Decimal::ZERO, // Let the risk manager determine the size
                         price: None,
                         position_side: None, // Will be set by engine
                     },
                 });
-            } else if is_bearish_flip && is_trend_strong {
+            } else if is_bearish_flip {
                 signal = Some(Signal {
                     signal_id: Uuid::new_v4(),
                     timestamp: kline.close_time,
                     confidence: dec!(1.0),
                     order_request: OrderRequest {
                         client_order_id: Uuid::new_v4(),
-                        symbol: "PLACEHOLDER_SYMBOL".to_string(),
+                        symbol: self.symbol.clone(),
                         side: OrderSide::Sell,
                         order_type: OrderType::Market,
-                        quantity: dec!(1.0),
+                        quantity: Decimal::ZERO, // Let the risk manager determine the size
                         price: None,
                         position_side: None, // Will be set by engine
                     },
                 });
             }
-        } else {
-            // Initialize prev_trend on first run
-            self.prev_trend = Some(current_trend);
         }
 
         // Update state for the next evaluation
-        self.prev_trend = Some(current_trend);
+        self.trend_direction = Some(current_trend);
+        self.prev_close = Some(close);
 
         Ok(signal)
     }

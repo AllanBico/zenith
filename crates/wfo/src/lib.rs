@@ -8,6 +8,7 @@ use database::DbRepository;
 use executor::{Portfolio, SimulatedExecutor};
 use optimizer::Optimizer;
 use risk::SimpleRiskManager;
+use analytics; // For AnalyticsEngine
 
 use uuid::Uuid;
 
@@ -124,6 +125,7 @@ impl WfoEngine {
             oos_run_id,
             self.optimizer_config.base_config.symbol.clone(),
             self.optimizer_config.base_config.interval.clone(),
+            self.base_config.clone(), // Pass the full config for stop-loss access
             portfolio,
             strategy,
             risk_manager,

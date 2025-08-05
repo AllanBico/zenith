@@ -13,7 +13,7 @@ use indicatif::{ProgressBar, ProgressStyle};
 use optimizer::Optimizer;
 use portfolio_backtester::{load_and_prepare_data, PortfolioManager};
 use risk::SimpleRiskManager;
-use serde_json::{from_value, json};
+use serde_json::{from_value, json, Value as JsonValue};
 use strategies::{create_strategy, StrategyId};
 use std::collections::HashMap;
 use std::net::SocketAddr; // For parsing socket addresses
@@ -407,6 +407,44 @@ async fn handle_optimize(args: OptimizeArgs) -> Result<()> {
     println!("\nOptimization process finished.");
     Ok(())
 }
+/// Generates parameters for a strategy based on the configuration.
+fn generate_strategy_params(config: &configuration::Config, strategy_id: StrategyId) -> Result<JsonValue> {
+    match strategy_id {
+        StrategyId::MACrossover => {
+            Ok(json!({
+                "ma_fast_period": config.strategies.ma_crossover.ma_fast_period,
+                "ma_slow_period": config.strategies.ma_crossover.ma_slow_period,
+                "trend_filter_period": config.strategies.ma_crossover.trend_filter_period,
+            }))
+        },
+        StrategyId::SuperTrend => {
+            Ok(json!({
+                "atr_period": config.strategies.super_trend.atr_period,
+                "atr_multiplier": config.strategies.super_trend.atr_multiplier,
+                "adx_threshold": config.strategies.super_trend.adx_threshold,
+                "adx_period": config.strategies.super_trend.adx_period,
+            }))
+        },
+        StrategyId::ProbReversion => {
+            Ok(json!({
+                "bb_period": config.strategies.prob_reversion.bb_period,
+                "bb_std_dev": config.strategies.prob_reversion.bb_std_dev,
+                "rsi_period": config.strategies.prob_reversion.rsi_period,
+                "rsi_oversold": config.strategies.prob_reversion.rsi_oversold,
+                "rsi_overbought": config.strategies.prob_reversion.rsi_overbought,
+                "adx_threshold": config.strategies.prob_reversion.adx_threshold,
+                "adx_period": config.strategies.prob_reversion.adx_period,
+            }))
+        },
+        StrategyId::FundingRateArb => {
+            Ok(json!({
+                "target_rate_threshold": config.strategies.funding_rate_arb.target_rate_threshold,
+                "basis_safety_threshold": config.strategies.funding_rate_arb.basis_safety_threshold,
+            }))
+        },
+    }
+}
+
 async fn handle_single_run(args: SingleRunArgs) -> Result<()> {
     let config = load_config(None)?;
     let db_pool = connect().await?;
@@ -417,13 +455,9 @@ async fn handle_single_run(args: SingleRunArgs) -> Result<()> {
 
     let job_id = Uuid::new_v4();
     let run_id = Uuid::new_v4();
-    let strategy_id = strategies::StrategyId::MACrossover;
+    let strategy_id = config.backtest.strategy_id;
 
-    let params = json!({
-        "ma_fast_period": config.strategies.ma_crossover.ma_fast_period,
-        "ma_slow_period": config.strategies.ma_crossover.ma_slow_period,
-        "trend_filter_period": config.strategies.ma_crossover.trend_filter_period,
-    });
+    let params = generate_strategy_params(&config, strategy_id)?;
     
     db_repo.save_optimization_job(
         job_id,
@@ -455,6 +489,7 @@ async fn handle_single_run(args: SingleRunArgs) -> Result<()> {
         run_id,
         symbol,
         interval,
+        config, // Pass the full config for stop-loss access
         portfolio,
         strategy,
         risk_manager,
