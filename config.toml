@@ -18,6 +18,32 @@ order_type = "Limit"
 #
 # API keys for different environments. These can be overridden via environment variables.
 # ------------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
+# Global Risk Management (Portfolio Circuit Breakers)
+#
+# These are the master safety rules that override all other logic.
+# ------------------------------------------------------------------------------
+[global_risk]
+# If total portfolio equity drops this much from its peak for the session,
+# the engine will halt ALL new trading activity.
+max_daily_drawdown_pct = 0.10 # (10%)
+
+# If any single bot (e.g., BTCUSDT) has this many losing trades in a row,
+# only that specific bot will be temporarily disabled.
+max_consecutive_losses = 7
+
+# The number of hours a bot will be put in "time-out" after hitting the
+# consecutive loss limit before it is automatically re-enabled.
+bot_cooldown_hours = 4
+
+# The maximum number of open positions any single bot is allowed to have.
+# For our current architecture, this MUST be 1.
+max_open_positions_per_asset = 1
+# ------------------------------------------------------------------------------
+# API Configuration
+#
+# API keys for different environments. These can be overridden via environment variables.
+# ------------------------------------------------------------------------------
 [api]
 binance_api_key = "31fbf16926ce01bfbf2dad27e1c087fc89749d9c1ea8d5c45db3c4c99620c920"
 binance_api_secret = "9ae595bb00812a75a3f1f43932599eba8177d668690a664eaea5c0f0071b9431"

@@ -10,6 +10,7 @@ use clap::ValueEnum;
 pub struct Config {
     pub api: ApiConfig,
     pub simulation: Simulation,
+    pub global_risk: GlobalRiskConfig,
     pub execution: ExecutionConfig,
     pub risk_management: RiskManagement,
     pub strategies: Strategies,
@@ -35,6 +36,25 @@ pub struct ExecutionConfig {
     /// The default order type to use. "Market" or "Limit".
     pub order_type: String,
 }
+/// Contains parameters for the portfolio-level circuit breakers.
+#[derive(Debug, Clone, Deserialize)]
+pub struct GlobalRiskConfig {
+    /// The maximum allowed drawdown from the session's peak equity.
+    /// If breached, all trading is halted for the session. E.g., 0.10 for 10%.
+    pub max_daily_drawdown_pct: Decimal,
+    
+    /// The maximum number of consecutive losing trades for any single bot.
+    /// If breached, only that bot is halted for the `bot_cooldown_hours`.
+    pub max_consecutive_losses: u32,
+
+    /// The number of hours a bot will be disabled after hitting the consecutive loss limit.
+    pub bot_cooldown_hours: u64,
+    
+    /// The maximum number of open positions a single bot can have.
+    /// For our current system, this should be set to 1.
+    pub max_open_positions_per_asset: u32,
+}
+
 /// A structure to hold an API key and secret pair.
 #[derive(Debug, Clone, Deserialize, Default)] // Default provides empty strings
 pub struct ApiKeys {

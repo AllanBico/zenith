@@ -1,23 +1,24 @@
 use crate::error::EngineError;
 use crate::event::{LiveEvent, MarketState}; // <-- NEW
+use crate::risk_manager::GlobalRiskManager; // <-- ADD THIS
 use api_client::{ApiClient, BookTickerUpdate, LiveConnector, MarkPriceUpdate};
 use configuration::{Config, LiveConfig};
 use database::DbRepository;
 use executor::{Executor, Portfolio};
 use risk::RiskManager;
-use rust_decimal_macros::dec;
 use std::collections::HashMap;
 use std::sync::Arc;
 use strategies::Strategy;
 use tokio::sync::{broadcast, mpsc, Mutex}; // <-- Add MPSC
 use uuid::Uuid;
 use chrono::Utc;
-use events::{LogMessage, LogLevel, WsMessage, KlineData};
+use events::{LogMessage, LogLevel, WsMessage};
 
 pub mod error;
-pub mod event; // <-- NEW
+pub mod event;
 pub mod reconciler;
 pub mod util;
+pub mod risk_manager;
 
 pub use reconciler::StateReconciler;
 /// Rounds quantity to the appropriate precision for the given symbol.
@@ -68,6 +69,10 @@ pub struct LiveEngine {
     // --- NEW: The event broadcaster ---
     event_tx: broadcast::Sender<WsMessage>,
 
+    // --- NEW: Global Risk Components ---
+    global_risk_manager: Arc<GlobalRiskManager>,
+    trading_enabled_flags: Arc<Mutex<HashMap<String, bool>>>,
+
     // --- Bot Management ---
     bots: HashMap<String, Bot>,
     /// NEW: The engine's real-time view of the market for each symbol.
@@ -90,6 +95,17 @@ impl LiveEngine {
             base_config.backtest.initial_capital,
         )));
 
+        // --- NEW: Construct the GRM and its shared state ---
+        let trading_enabled_flags = Arc::new(Mutex::new(HashMap::new()));
+        let global_risk_manager = Arc::new(GlobalRiskManager::new(
+            base_config.global_risk.clone(),
+            Arc::clone(&portfolio),
+            Arc::clone(&trading_enabled_flags),
+            event_tx.clone(),
+            base_config.backtest.initial_capital, // Provide initial equity
+        ));
+        // --- END NEW ---
+
         Self {
             live_config,
             base_config,
@@ -101,6 +117,8 @@ impl LiveEngine {
             event_tx, // <-- STORE IT
             bots: HashMap::new(),
             market_states: HashMap::new(),
+            global_risk_manager, // <-- STORE IT
+            trading_enabled_flags, // <-- STORE IT
         }
     }
 
@@ -211,10 +229,11 @@ impl LiveEngine {
         Ok(())
     }
 
-    /// NEW: Combines bot creation and leverage setting.
+    /// Combines bot creation, leverage setting, and trading flag initialization.
     async fn populate_bots_and_set_leverage(&mut self) -> Result<(), EngineError> {
         let default_interval = self.base_config.backtest.interval.clone();
-        
+        let mut flags = self.trading_enabled_flags.lock().await; // Lock the flags
+
         for bot_config in &self.live_config.bots {
             if bot_config.enabled {
                 let interval = bot_config.interval.clone().unwrap_or_else(|| default_interval.clone());
@@ -235,6 +254,9 @@ impl LiveEngine {
                 };
                 self.bots.insert(bot_config.symbol.clone(), bot);
                 self.market_states.entry(bot_config.symbol.clone()).or_default();
+
+                // --- NEW: Initialize the trading flag for this bot ---
+                flags.insert(bot_config.symbol.clone(), true);
             }
         }
         Ok(())
@@ -337,11 +359,20 @@ impl LiveEngine {
         });
     }
     
-    /// Renamed from `process_kline` to be more specific. Contains the trading logic.
+    /// The core logic for processing a kline event to generate a trade.
     async fn process_kline_signal(&mut self, symbol: &str, kline: &core_types::Kline) -> Result<(), EngineError> {
-        // This function's logic is the SAME as the old `process_kline` method.
-        // It evaluates the strategy, checks risk, and calls the executor.
-        
+        // --- 1. OBEY THE CIRCUIT BREAKER (Guard Clause) ---
+        let is_trading_enabled = {
+            let flags = self.trading_enabled_flags.lock().await;
+            *flags.get(symbol).unwrap_or(&false)
+        };
+
+        if !is_trading_enabled {
+            // Silently return if this bot has been halted.
+            // A debug log could be added here.
+            return Ok(());
+        }
+
         tracing::info!("[ENGINE] Processing kline for {}: broadcast_klines = {}", symbol, self.live_config.broadcast_klines);
         // Broadcast kline data to WebSocket clients if enabled
         if self.live_config.broadcast_klines {
@@ -369,7 +400,20 @@ impl LiveEngine {
 
         let bot = self.bots.get_mut(symbol).ok_or_else(|| EngineError::BotNotFound(symbol.to_string()))?;
 
-        if let Some(signal) = bot.strategy.evaluate(&kline)? {
+        // --- 2. ENFORCE POSITION LIMIT (Guard Clause) ---
+        let position = self.portfolio.lock().await.get_position(symbol).cloned();
+        if let Some(pos) = position {
+            // If a position is already open, do not evaluate for a new entry signal.
+            // This enforces `max_open_positions_per_asset = 1`.
+            // We only proceed if the signal's side is opposite to the current position.
+            if let Some(signal) = bot.strategy.evaluate(kline)? {
+                if signal.order_request.side == pos.side {
+                    return Ok(());
+                }
+            }
+        }
+
+        if let Some(signal) = bot.strategy.evaluate(kline)? {
             let bot_symbol = bot.symbol.clone();
             let signal_side = signal.order_request.side;
             let close_price = kline.close;
@@ -440,6 +484,12 @@ impl LiveEngine {
                         portfolio.update_with_execution(&execution)?;
                     } // Portfolio lock is released here
                     
+                    // --- 4. NOTIFY THE GLOBAL RISK MANAGER ---
+                    // This logic is complex: we need to find the entry to form a closed trade.
+                    // This part will need a robust implementation involving a trade tracker.
+                    // For now, we will add a placeholder for this crucial notification.
+                    // self.global_risk_manager.on_trade_closed(&trade).await?;
+
                     self.broadcast_portfolio_state().await?; // Broadcast updated state
                     
                     // Trigger immediate portfolio sync to ensure our state matches the exchange
