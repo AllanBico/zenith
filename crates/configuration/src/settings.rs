@@ -13,6 +13,8 @@ pub struct Config {
     pub global_risk: GlobalRiskConfig,
     pub execution: ExecutionConfig,
     pub risk_management: RiskManagement,
+    #[serde(default)] // Use default (empty) if not provided by env
+    pub telegram: TelegramConfig,
     pub strategies: Strategies,
     /// Configuration for backtesting parameters
     pub backtest: Backtest,
@@ -20,6 +22,16 @@ pub struct Config {
     #[serde(default)]
     pub logging: LoggingConfig,
 }
+
+/// Holds the secrets for the Telegram alerting service.
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct TelegramConfig {
+    #[serde(default)]
+    pub token: String,
+    #[serde(default)]
+    pub chat_id: String,
+}
+
 /// Holds the API connection details and secrets for different environments.
 #[derive(Debug, Clone, Deserialize)]
 pub struct ApiConfig {

@@ -13,7 +13,7 @@ pub mod settings;
 // Re-export the core types to provide a clean public API.
 pub use settings::{
     LiveBotConfig, LiveConfig,Config, FundingRateArbParams, MACrossoverParams, ProbReversionParams, RiskManagement,PortfolioBotConfig, PortfolioConfig,
-    Simulation, Strategies, SuperTrendParams, LoggingConfig,
+    Simulation, Strategies, SuperTrendParams, LoggingConfig, TelegramConfig,
 };
 
 #[cfg(feature = "clap")]

@@ -12,7 +12,7 @@
 [execution]
 # The order type the live engine will use.
 # Options: "Market", "Limit" (uses Post-Only orders to be a Maker)
-order_type = "Limit"
+order_type = "Market"
 # ------------------------------------------------------------------------------
 # API Configuration
 #

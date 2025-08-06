@@ -73,7 +73,7 @@ export const useLiveSocket = () => {
         // Send a ping to keep the connection alive
         socketRef.current.send(JSON.stringify({ type: "ping" }));
       }
-    }, 30000); // Every 30 seconds
+    }, 80800); // Every 30 seconds
 
     // Cleanup function to close the socket when the component unmounts.
     return () => {

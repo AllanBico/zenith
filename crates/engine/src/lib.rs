@@ -478,24 +478,13 @@ impl LiveEngine {
                 Ok(execution) => {
                     self.log(LogLevel::Info, &format!("SUCCESS: Execution confirmed for {}: {:?}", execution.symbol, execution.price));
                     
-                    // Update local portfolio state
-                    {
-                        let mut portfolio = self.portfolio.lock().await;
-                        portfolio.update_with_execution(&execution)?;
-                    } // Portfolio lock is released here
-                    
-                    // --- 4. NOTIFY THE GLOBAL RISK MANAGER ---
-                    // This logic is complex: we need to find the entry to form a closed trade.
-                    // This part will need a robust implementation involving a trade tracker.
-                    // For now, we will add a placeholder for this crucial notification.
-                    // self.global_risk_manager.on_trade_closed(&trade).await?;
+                    // --- BROADCAST THE TRADE EVENT ---
+                    let _ = self.event_tx.send(events::WsMessage::TradeExecuted(execution.clone()));
+                    // --- END ---
 
-                    self.broadcast_portfolio_state().await?; // Broadcast updated state
-                    
-                    // Trigger immediate portfolio sync to ensure our state matches the exchange
-                    tracing::info!("[ENGINE] Triggering immediate portfolio sync after execution");
-                    self.sync_portfolio_state().await?;
-                    self.broadcast_portfolio_state().await?; // Broadcast the synced state
+                    let mut portfolio = self.portfolio.lock().await;
+                    portfolio.update_with_execution(&execution)?;
+                    self.broadcast_portfolio_state().await?;
                 }
                 Err(e) => {
                     self.log(LogLevel::Error, &format!("ERROR: Failed to execute order for {}: {:?}", bot_symbol, e));

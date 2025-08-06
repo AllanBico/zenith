@@ -1,4 +1,5 @@
 use anyhow::Result;
+use alerter::{run_alerter_service, TelegramAlerter}; // <-- ADD THIS
 use api_client::{ApiClient, BinanceClient};
 use backtester::Backtester;
 use chrono::{DateTime, NaiveDate, Utc, Duration, Datelike};
@@ -21,10 +22,11 @@ use std::net::SocketAddr; // For parsing socket addresses
 use std::ops::Add;
 use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::sync::broadcast;
+use tokio::sync::broadcast; // <-- ADD THIS
 use uuid::Uuid;
 use analyzer::Analyzer;
 use wfo::WfoEngine;
+use web_server;
 
 // Note: Advanced tracing imports removed - using config-based tracing instead
 
@@ -62,7 +64,7 @@ async fn main() -> Result<()> {
         Commands::Wfo(args) => handle_wfo(args).await?,
         Commands::PortfolioRun(args) => handle_portfolio_run(args).await?,
         Commands::Run(args) => handle_run(args).await?,
-        Commands::Serve(args) => handle_serve(args).await?, // New command
+        Commands::Serve(args) => handle_serve(args).await?,
     }
     
     tracing::info!("Zenith CLI application finished.");
@@ -191,18 +193,40 @@ async fn handle_run(args: RunArgs) -> Result<()> {
     let base_config = load_config(None)?;
     let live_config = load_live_config(&args.config)?;
 
-    // 2. Determine Execution Mode & Print Banner
+    // 2. Create Shared Components
+    let db_pool = connect().await?;
+    run_migrations(&db_pool).await?;
+    let db_repo = DbRepository::new(db_pool);
+    
+    // --- THE CENTRAL BROADCAST CHANNEL ---
+    let (event_tx, _) = broadcast::channel(1024);
+
+    // 3. Instantiate and Spawn the Alerter Service (if configured)
+    if let Some(alerter) = TelegramAlerter::new(&base_config.telegram) {
+        let alerter_rx = event_tx.subscribe(); // Get a receiver for the alerter
+        tokio::spawn(run_alerter_service(alerter, alerter_rx));
+        tracing::info!("Telegram alerter service started.");
+    }
+
+    // 4. Spawn the Web Server in a Background Task
+    let web_server_addr = "0.0.0.0:8080".parse()?;
+    let web_server_repo = db_repo.clone();
+    let web_server_tx = event_tx.clone();
+    tokio::spawn(async move {
+        if let Err(e) = web_server::run_server(web_server_addr, web_server_repo, web_server_tx).await {
+            tracing::error!(error = ?e, "Web server task failed.");
+        }
+    });
+
+    // 5. Determine Execution Mode & Create Executor
     let mode = args.mode;
     let is_live_trading = matches!(mode, ExecutionMode::Live);
-
-    // OBEY THE MASTER SAFETY SWITCH
+    
     if is_live_trading && !live_config.live_trading_enabled {
         anyhow::bail!("FATAL: Attempted to run in Live mode, but `live_trading_enabled` is false in live.toml. Aborting.");
     }
-
+    
     let api_client = Arc::new(BinanceClient::new(is_live_trading, &base_config.api)) as Arc<dyn ApiClient>;
-
-    // --- 3. EXECUTOR SELECTION LOGIC ---
     let executor: Arc<dyn executor::Executor> = match mode {
         ExecutionMode::Paper => {
             println!("[INFO] INITIALIZING IN PAPER TRADING MODE");
@@ -228,56 +252,23 @@ async fn handle_run(args: RunArgs) -> Result<()> {
             }
         }
     };
-    
-    // Print the final mode banner after selection
-    match mode {
-        ExecutionMode::Testnet => {
-            println!("[WARN] >> Target: Binance TESTNET <<");
-        }
-        ExecutionMode::Live => {
-            println!("\n!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
-            println!("[CRITICAL] >> Target: Binance PRODUCTION (REAL MONEY) <<");
-            println!("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n");
-            println!("Starting in 5 seconds... Press Ctrl+C to cancel.");
-            tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
-        }
-        _ => {}
-    }
 
-    // 4. Create and Run the Engine
-    let db_pool = connect().await?;
-    run_migrations(&db_pool).await?;
-    let db_repo = DbRepository::new(db_pool);
+    // 6. Create and Run the LiveEngine (this is the main, blocking task)
     let risk_manager = Arc::new(SimpleRiskManager::new(base_config.risk_management.clone())?);
-
-    // Create broadcast channel for WebSocket events
-    let (event_tx, _) = broadcast::channel::<WsMessage>(10000); // Much larger capacity for kline data
-
-    // Start the web server in a separate task
-    let web_server_event_tx = event_tx.clone();
-    let web_server_db_repo = db_repo.clone();
-    let web_server_addr = SocketAddr::from(([0, 0, 0, 0], 8080));
-    
-    tokio::spawn(async move {
-        tracing::info!("Starting web server on {}", web_server_addr);
-        if let Err(e) = web_server::run_server(web_server_addr, web_server_db_repo, web_server_event_tx).await {
-            tracing::error!("Web server error: {:?}", e);
-        }
-    });
 
     let mut engine = LiveEngine::new(
         live_config,
         base_config,
         api_client,
-        executor, // Plug in the selected executor
+        executor,
         db_repo,
         risk_manager,
-        event_tx,
+        event_tx, // Give the engine the original sender
     );
 
     engine.run().await?;
     
-    println!("Engine has stopped.");
+    tracing::info!("Engine has stopped.");
     Ok(())
 }
 
