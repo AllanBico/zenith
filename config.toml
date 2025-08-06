@@ -4,7 +4,15 @@
 # This file is the central control panel for the entire application.
 # All strategy parameters, risk settings, and connection details are defined here.
 # ==============================================================================
-
+# ------------------------------------------------------------------------------
+# Live Execution Engine Parameters
+#
+# These rules govern the behavior of the live trading engine's executor.
+# ------------------------------------------------------------------------------
+[execution]
+# The order type the live engine will use.
+# Options: "Market", "Limit" (uses Post-Only orders to be a Maker)
+order_type = "Limit"
 # ------------------------------------------------------------------------------
 # API Configuration
 #
@@ -32,7 +40,7 @@ secret = "ymgRxY9pYXRtbDjwqtI2Fo1fK8CtctBpx5kjNNjxv1uIrmGcM6qgu7A91vgfpAaY"
 # Choose one of: "MACrossover", "SuperTrend", "ProbReversion", "FundingRateArb"
 # ------------------------------------------------------------------------------
 [backtest]
-strategy_id = "ProbReversion"
+strategy_id = "SuperTrend"
 symbol = "BTCUSDT"
 interval = "1m"
 initial_capital = 1000.0
@@ -64,7 +72,7 @@ risk_per_trade_pct = 0.05
 
 # The distance to the stop-loss, used for calculating position size.
 # 0.02 means the stop-loss is assumed to be 2% away from the entry price.
-stop_loss_pct = 0.02
+stop_loss_pct = 0.04
 
 # ------------------------------------------------------------------------------
 # Strategy Parameters
@@ -131,6 +139,18 @@ thread_ids = false
 # Enable target/module information in log messages.
 # Default: true
 targets = true
+
+# Enable file logging (logs will be saved to logs/ directory).
+# Default: true
+file_logging = true
+
+# The directory for log files.
+# Default: "logs"
+log_directory = "logs"
+
+# The filename prefix for log files.
+# Default: "zenith"
+log_filename = "zenith"
 
 # Custom log level overrides for specific modules.
 # Format: "module_name=level"

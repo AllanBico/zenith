@@ -1,22 +1,21 @@
 use axum::{
-    extract::DefaultBodyLimit,
     routing::get,
     Router,
 };
-use tracing;
 use database::DbRepository;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::broadcast;
 use events::WsMessage;
 use tower_http::{
-    cors::{Any, CorsLayer, AllowOrigin, ExposeHeaders, AllowHeaders},
+    cors::{Any, CorsLayer},
     trace::TraceLayer, // <-- Import the TraceLayer
 };
 // Add Mutex for the cache
 use tokio::sync::Mutex;
 use events::PortfolioState; // We need this type for the cache
-// Note: Tracing is now handled by the main application configuration
+
+// Note: Advanced tracing imports removed - using config-based tracing instead
 
 
 
@@ -37,13 +36,12 @@ pub struct AppState {
 
 /// The main function to configure and run the web server.
 pub async fn run_server(addr: SocketAddr, db_repo: DbRepository, event_tx: broadcast::Sender<WsMessage>) -> anyhow::Result<()> {
-    // Note: Tracing is already initialized in main.rs, so we don't need to initialize it again here.
-    // This prevents conflicts between different tracing subscribers.
-    
-    // Create the cache
+    // Note: Tracing is already initialized in main.rs via config.toml
+    // We don't need to initialize it again here to avoid conflicts
+
+    // Create the cache for portfolio state
     let portfolio_state_cache = Arc::new(Mutex::new(None));
 
-    // --- Spawn a task to keep the cache updated ---
     let mut rx = event_tx.subscribe();
     let cache_clone = Arc::clone(&portfolio_state_cache);
     tokio::spawn(async move {
@@ -55,40 +53,34 @@ pub async fn run_server(addr: SocketAddr, db_repo: DbRepository, event_tx: broad
         }
     });
     
-    // Create Shared State, now including the cache
+    // Create Shared State
     let app_state = Arc::new(AppState {
         db_repo,
         event_tx,
         portfolio_state_cache,
     });
+    
+    // Define CORS
     let cors = CorsLayer::new()
-        .allow_origin(AllowOrigin::any())
+        .allow_origin(Any)
         .allow_methods(Any)
-        .allow_headers(AllowHeaders::any())
-        .expose_headers(ExposeHeaders::any());
+        .allow_headers(Any);
 
-    // --- DEFINE THE APPLICATION ROUTES ---
+    // Define the Application Routes
     let app = Router::new()
         .route("/api/health", get(|| async { "OK" }))
-        .route("/api/cors-test", get(|| async { "CORS is working!" }))
         .route("/api/optimization-jobs", get(handlers::get_optimization_jobs))
         .route("/api/single-runs", get(handlers::get_single_runs))
+        .route("/api/wfo-jobs", get(handlers::get_wfo_jobs))
         .route("/api/optimization-jobs/:job_id", get(handlers::get_optimization_job_details))
         .route("/api/backtest-runs/:run_id", get(handlers::get_backtest_run_details))
-        .route("/api/backtest-runs/:run_id/details", get(handlers::get_backtest_run_full_details))
-        .route("/api/wfo-jobs", get(handlers::get_wfo_jobs))
-        .route("/api/wfo-jobs/:wfo_job_id/runs", get(handlers::get_wfo_job_runs))
-        .route("/ws", get(handlers::websocket_handler)) // WebSocket handler for real-time communication
+        .route("/ws", get(handlers::websocket_handler))
         .with_state(app_state)
         .layer(cors)
-        // --- ADD THE TRACE LAYER ---
-        // This middleware will automatically log information about every incoming request.
-        .layer(TraceLayer::new_for_http())
-        .layer(DefaultBodyLimit::max(1024 * 1024 * 50)); // Set a 50MB body limit
+        .layer(TraceLayer::new_for_http());
 
-    tracing::info!("Web server listening on http://{}", addr);
-    tracing::info!("Web server started and listening on {}", addr); // <-- Use tracing::info!
-
+    // Start the Server
+    tracing::info!("Web server starting and listening on http://{}", addr);
     let listener = tokio::net::TcpListener::bind(addr).await?;
     axum::serve(listener, app).await?;
 

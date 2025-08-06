@@ -11,17 +11,25 @@ use tracing;
 /// Rounds quantity to the appropriate precision for the given symbol.
 /// This prevents "Precision is over the maximum defined for this asset" errors.
 fn round_quantity_to_precision(symbol: &str, quantity: Decimal) -> Decimal {
-    // Simple precision mapping for common symbols
-    // In a real implementation, this would come from exchange info API
+    // Conservative precision mapping for common symbols
+    // These are based on Binance futures requirements
     let precision = match symbol {
-        "BTCUSDT" => 3,  // BTC precision is 0.001
-        "ETHUSDT" => 3,  // ETH precision is 0.001
+        "BTCUSDT" => 2,  // BTC precision is 0.01 (more conservative)
+        "ETHUSDT" => 2,  // ETH precision is 0.01 (more conservative)
         _ => 2,          // Default to 2 decimal places
     };
     
     // Round to the specified precision
     let scale = Decimal::from(10_i64.pow(precision as u32));
-    (quantity * scale).round() / scale
+    let rounded = (quantity * scale).round() / scale;
+    
+    // Ensure we don't return zero if the original quantity was positive
+    if quantity > Decimal::ZERO && rounded == Decimal::ZERO {
+        // Return the minimum quantity for this precision
+        Decimal::from(10_i64.pow((precision - 1) as u32)) / scale
+    } else {
+        rounded
+    }
 }
 
 /// A simple, concrete implementation of the `RiskManager` trait.
@@ -81,7 +89,7 @@ impl RiskManager for SimpleRiskManager {
                 close_order.position_side = Some(PositionSide::from_order_side(close_order.side));
                 return Ok(close_order);
             }
-            // If we have a position in the same direction, we'll add to it below
+            // If we have a position in the same direction, we'll handle it below
         }
 
         // --- 3. Calculate Stop-Loss Price and Distance ---
@@ -139,16 +147,28 @@ impl RiskManager for SimpleRiskManager {
         tracing::info!("Risk params - Risk per trade: {}, Stop loss: {}, Confidence: {}, Total value: {}, Cash: {}",
             self.params.risk_per_trade_pct, self.params.stop_loss_pct, signal.confidence, portfolio_state.total_value, portfolio_state.cash);
         
-        // If we already have a position, calculate how much more to add
+        // If we already have a position, calculate how much to add or reduce
         let quantity = if let Some(position) = current_position {
-            // Only add to position if target is larger than current
+            // For the same direction, we can add to the position
             if target_quantity > position.quantity {
                 target_quantity - position.quantity
+            } else if target_quantity < position.quantity {
+                // If target is smaller, we need to reduce the position
+                // Calculate how much to reduce by
+                let reduction_amount = position.quantity - target_quantity;
+                tracing::info!("Target quantity {} is smaller than current position {}. Reducing position by {}.", target_quantity, position.quantity, reduction_amount);
+                
+                // Create a closing order for the reduction amount
+                let mut close_order = signal.order_request.clone();
+                close_order.quantity = reduction_amount;
+                close_order.side = position.side.opposite(); // Opposite side to close
+                close_order.position_side = Some(PositionSide::from_order_side(close_order.side));
+                return Ok(close_order);
             } else {
-                // If target is smaller or equal, don't place an order
-                tracing::info!("Target quantity {} is not larger than current position {}. Skipping order.", target_quantity, position.quantity);
+                // If target equals current, no order needed
+                tracing::info!("Target quantity {} equals current position {}. No order needed.", target_quantity, position.quantity);
                 return Err(RiskError::Calculation(
-                    format!("Target quantity {} is not larger than current position {}. No order needed.", target_quantity, position.quantity)
+                    format!("Target quantity {} equals current position {}. No order needed.", target_quantity, position.quantity)
                 ));
             }
         } else {
@@ -160,6 +180,13 @@ impl RiskManager for SimpleRiskManager {
         let rounded_quantity = round_quantity_to_precision(&signal.order_request.symbol, quantity);
         tracing::info!("Precision rounding - Symbol: {}, Original: {}, Rounded: {}", 
             signal.order_request.symbol, quantity, rounded_quantity);
+        
+        // Additional validation for minimum quantity
+        if rounded_quantity <= Decimal::ZERO {
+            return Err(RiskError::Calculation(
+                format!("Rounded quantity {} is zero or negative for {}", rounded_quantity, signal.order_request.symbol)
+            ));
+        }
         
         // --- 6. Construct Final Order Request ---
         // Create a new order request, using the original as a template but

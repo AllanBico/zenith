@@ -36,5 +36,5 @@ pub fn create_strategy_from_live_config(
         }
     }
 
-    Ok(create_strategy(bot_config.strategy_id, &temp_config)?)
+    Ok(create_strategy(bot_config.strategy_id, &temp_config, bot_config.symbol.as_str())?)
 }

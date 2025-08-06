@@ -4,6 +4,7 @@ pub use optimizer_config::{OptimizerConfig, ParameterRange, BaseConfig};
 
 use rust_decimal_macros::dec;
 use crate::error::ConfigError;
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 // Declare the modules that make up this crate.
 pub mod error;
@@ -117,20 +118,32 @@ pub fn init_tracing(logging_config: &LoggingConfig) -> Result<(), ConfigError> {
         );
     }
     
-    // Build the subscriber with the configured options
-    let mut builder = tracing_subscriber::fmt::Subscriber::builder()
-        .with_env_filter(filter)
+    // Create the registry with the filter
+    let registry = tracing_subscriber::registry().with(filter);
+    
+    // Add console layer
+    let console_layer = tracing_subscriber::fmt::layer()
         .with_ansi(logging_config.colored)
         .with_thread_ids(logging_config.thread_ids)
         .with_target(logging_config.targets);
     
     // Add timer if timestamps are enabled
-    if logging_config.timestamps {
-        builder = builder.with_timer(tracing_subscriber::fmt::time::SystemTime);
-    }
+    let console_layer = if logging_config.timestamps {
+        console_layer.with_timer(tracing_subscriber::fmt::time::SystemTime)
+    } else {
+        console_layer
+    };
     
-    // Initialize the subscriber directly
-    builder.init();
+    let registry = registry.with(console_layer);
+    
+    // Initialize the registry (console logging only)
+    registry.init();
+    
+    // For now, we'll use a simple approach: console logging works well
+    // File logging can be added later with a more robust implementation
+    if logging_config.file_logging {
+        tracing::info!("File logging is enabled in config but not yet implemented in this version");
+    }
     
     Ok(())
 }

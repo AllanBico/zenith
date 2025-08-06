@@ -9,12 +9,42 @@ use tokio_tungstenite::{connect_async, tungstenite::Message};
 use tracing;
 use url::Url;
 use chrono::{TimeZone, Utc};
+use serde::de::DeserializeOwned;
+// --- Book Ticker Stream Deserialization ---
 
+/// Represents a Book Ticker update from the `<symbol>@bookTicker` stream.
+/// Provides the real-time best bid and ask prices and quantities.
+#[derive(Debug, Clone, Deserialize)]
+pub struct BookTickerUpdate {
+    #[serde(rename = "s")]
+    pub symbol: String,
+    #[serde(rename = "b")]
+    pub best_bid_price: Decimal,
+    #[serde(rename = "B")]
+    pub best_bid_qty: Decimal,
+    #[serde(rename = "a")]
+    pub best_ask_price: Decimal,
+    #[serde(rename = "A")]
+    pub best_ask_qty: Decimal,
+}
+
+// --- Mark Price Stream Deserialization ---
+
+/// Represents a Mark Price update from the `<symbol>@markPrice@1s` stream.
+#[derive(Debug, Clone, Deserialize)]
+pub struct MarkPriceUpdate {
+    #[serde(rename = "s")]
+    pub symbol: String,
+    #[serde(rename = "p")]
+    pub mark_price: Decimal,
+    #[serde(rename = "r")]
+    pub funding_rate: Decimal,
+}
 // --- WebSocket Deserialization Structs ---
 #[derive(Debug, Deserialize)]
-struct WsStreamWrapper {
+struct WsStreamWrapper<T> {
     stream: String,
-    data: WsKlineEvent,
+    data: T,
 }
 #[derive(Debug, Deserialize)]
 struct WsKlineEvent {
@@ -63,6 +93,76 @@ impl LiveConnector {
             base_url: Url::parse(base_url).expect("Failed to parse WebSocket base URL"),
         }
     }
+    pub fn subscribe_to_book_tickers(
+        &self,
+        symbols: &[String],
+    ) -> Result<mpsc::Receiver<BookTickerUpdate>, ApiError> {
+        let (tx, rx) = mpsc::channel(1024);
+        let streams = symbols
+            .iter()
+            .map(|s| format!("{}@bookTicker", s.to_lowercase()))
+            .collect::<Vec<_>>()
+            .join("/");
+        
+        let mut url = self.base_url.clone();
+        url.set_path("/stream");
+        url.set_query(Some(&format!("streams={}", streams)));
+
+        tokio::spawn(async move {
+            loop {
+                if let Ok((mut stream, _)) = connect_async(url.clone()).await {
+                    tracing::info!("[WS-BookTicker] Connection established.");
+                    while let Some(msg) = stream.next().await {
+                        if let Ok(Message::Text(text)) = msg {
+                            if let Ok(wrapper) = serde_json::from_str::<WsStreamWrapper<BookTickerUpdate>>(&text) {
+                                if tx.send(wrapper.data).await.is_err() { break; }
+                            }
+                        }
+                    }
+                }
+                tracing::warn!("[WS-BookTicker] Disconnected. Reconnecting in 5s...");
+                tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+            }
+        });
+
+        Ok(rx)
+    }
+
+    /// Subscribes to the Mark Price stream for a list of symbols.
+    pub fn subscribe_to_mark_prices(
+        &self,
+        symbols: &[String],
+    ) -> Result<mpsc::Receiver<MarkPriceUpdate>, ApiError> {
+        let (tx, rx) = mpsc::channel(1024);
+        let streams = symbols
+            .iter()
+            .map(|s| format!("{}@markPrice@1s", s.to_lowercase()))
+            .collect::<Vec<_>>()
+            .join("/");
+        
+        let mut url = self.base_url.clone();
+        url.set_path("/stream");
+        url.set_query(Some(&format!("streams={}", streams)));
+
+        tokio::spawn(async move {
+            loop {
+                if let Ok((mut stream, _)) = connect_async(url.clone()).await {
+                    tracing::info!("[WS-MarkPrice] Connection established.");
+                    while let Some(msg) = stream.next().await {
+                        if let Ok(Message::Text(text)) = msg {
+                            if let Ok(wrapper) = serde_json::from_str::<WsStreamWrapper<MarkPriceUpdate>>(&text) {
+                                if tx.send(wrapper.data).await.is_err() { break; }
+                            }
+                        }
+                    }
+                }
+                tracing::warn!("[WS-MarkPrice] Disconnected. Reconnecting in 5s...");
+                tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+            }
+        });
+
+        Ok(rx)
+    }
 
     /// Subscribes to kline streams and returns a channel Receiver for `(symbol, Kline)` data.
     pub fn subscribe_to_klines(
@@ -99,7 +199,7 @@ impl LiveConnector {
                             match msg {
                                 Ok(Message::Text(text)) => {
                                     // We only care about klines that are closed.
-                                    match serde_json::from_str::<WsStreamWrapper>(&text) {
+                                    match serde_json::from_str::<WsStreamWrapper<WsKlineEvent>>(&text) {
                                         Ok(wrapper) => {
                                             if wrapper.data.event_type == "kline" {
                                                 if wrapper.data.kline.is_closed {

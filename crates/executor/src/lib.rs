@@ -29,5 +29,5 @@ pub mod portfolio;
 
 // Re-export the key components to provide a clean, public-facing API.
 pub use error::ExecutorError;
-pub use exchange::{Executor, LiveExecutor, SimulatedExecutor};
+pub use exchange::{Executor, LiveExecutor, SimulatedExecutor, LimitOrderExecutor};
 pub use portfolio::Portfolio;

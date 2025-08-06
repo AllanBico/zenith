@@ -113,7 +113,7 @@ impl Backtester {
                         };
                         
                         // Execute the stop-loss order
-                        let execution = self.executor.execute(&close_signal.order_request, kline).await?;
+                        let execution = self.executor.execute(&close_signal.order_request, kline, None, None).await?;
                         self.portfolio.update_with_execution(&execution)?;
                         
                         // Match the trade
@@ -154,7 +154,7 @@ impl Backtester {
                     kline.close
                 )?;
 
-                let execution = self.executor.execute(&order_request, kline).await?;
+                let execution = self.executor.execute(&order_request, kline, None, None).await?;
                 self.portfolio.update_with_execution(&execution)?;
                 
                 let position_after = self.portfolio.get_position(&self.symbol);

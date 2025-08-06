@@ -15,9 +15,10 @@ mod auth;
 pub mod error;
 pub mod responses;
 pub mod live_connector;
+
 // --- Public API ---
 pub use responses::{BalanceResponse, OrderResponse, PositionResponse, ApiErrorResponse, ExchangeInfoResponse, PositionModeResponse};
-pub use live_connector::LiveConnector;
+pub use live_connector::{BookTickerUpdate, LiveConnector, MarkPriceUpdate};
 /// The generic, abstract interface for a trading exchange API client.
 /// This trait is the contract that the live engine will use, allowing the
 /// underlying implementation (live or mock) to be swapped out.
@@ -37,6 +38,9 @@ pub trait ApiClient: Send + Sync {
 
     /// Places a new order on the exchange. (Authenticated)
     async fn place_order(&self, order: &OrderRequest) -> Result<OrderResponse, ApiError>;
+
+    /// Places a new Post-Only LIMIT order on the exchange. (Authenticated)
+    async fn place_limit_order(&self, order: &OrderRequest) -> Result<OrderResponse, ApiError>;
 
     /// Fetches the current account balance for all assets. (Authenticated)
     async fn get_account_balance(&self) -> Result<Vec<BalanceResponse>, ApiError>;
@@ -226,6 +230,35 @@ impl ApiClient for BinanceClient {
         params.insert("side", format!("{:?}", order.side).to_uppercase());
         params.insert("type", format!("{:?}", order.order_type).to_uppercase());
         params.insert("quantity", order.quantity.to_string());
+        params.insert("newClientOrderId", order.client_order_id.to_string());
+        
+        // Add position side if specified (for hedge mode)
+        if let Some(position_side) = order.position_side {
+            params.insert("positionSide", format!("{:?}", position_side).to_uppercase());
+        }
+        
+        self._post_signed("/fapi/v1/order", &mut params).await
+    }
+
+    /// Places a new Post-Only LIMIT order on the exchange.
+    async fn place_limit_order(&self, order: &OrderRequest) -> Result<OrderResponse, ApiError> {
+        let mut params = BTreeMap::new();
+        params.insert("symbol", order.symbol.clone());
+        params.insert("side", format!("{:?}", order.side).to_uppercase());
+        params.insert("type", "LIMIT".to_string()); // Explicitly set to LIMIT
+        params.insert("quantity", order.quantity.to_string());
+        
+        // --- KEY ADDITIONS FOR LIMIT ORDERS ---
+        let price = order.price.ok_or_else(|| {
+            ApiError::InvalidData("Limit order request must have a price.".to_string())
+        })?;
+        params.insert("price", price.to_string());
+        
+        // "GTX" is the API code for a Post-Only order.
+        // This ensures the order is only a "Maker" and never a "Taker".
+        params.insert("timeInForce", "GTX".to_string());
+        // --- END KEY ADDITIONS ---
+        
         params.insert("newClientOrderId", order.client_order_id.to_string());
         
         // Add position side if specified (for hedge mode)

@@ -67,6 +67,7 @@ futures = "0.3"
 # For creating beautiful and functional command-line progress bars.
 indicatif = { version = "0.18", features = ["tokio"] }
 tracing-indicatif = "0.3"
+tracing-appender = "0.2"
 # For handling dates provided as command-line arguments.
 chrono = "0.4"
 

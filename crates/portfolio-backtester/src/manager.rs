@@ -87,7 +87,7 @@ impl PortfolioManager {
                         kline.close,
                     ).unwrap();
 
-                    let execution = self.executor.execute(&order_request, kline).await.unwrap();
+                    let execution = self.executor.execute(&order_request, kline, None, None).await.unwrap();
                     
                     // 3. Update the single, shared portfolio state.
                     self.portfolio.update_with_execution(&execution).unwrap();

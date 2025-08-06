@@ -13,7 +13,6 @@ core-types = { path = "../core-types" }
 
 # Depends on configuration to get the simulation parameters like fees and slippage.
 configuration = { path = "../configuration" }
-
 # Depends on api-client for live trading functionality.
 api-client = { path = "../api-client" }
 

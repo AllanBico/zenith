@@ -7,7 +7,7 @@ use comfy_table::{presets::UTF8_FULL, Cell, ContentArrangement, Table};
 use configuration::{load_config, load_live_config, load_optimizer_config, load_portfolio_config, PortfolioBotConfig, MACrossoverParams, ProbReversionParams, SuperTrendParams, ExecutionMode};
 use database::{connect, run_migrations, DbRepository};
 use engine::LiveEngine;
-use executor::{Portfolio, SimulatedExecutor, LiveExecutor};
+use executor::{Portfolio, SimulatedExecutor, LiveExecutor, LimitOrderExecutor};
 use events::WsMessage;
 use futures::future::join_all;
 use indicatif::{ProgressBar, ProgressStyle};
@@ -23,23 +23,34 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::broadcast;
 use uuid::Uuid;
-use tracing;
 use analyzer::Analyzer;
 use wfo::WfoEngine;
+
+// Note: Advanced tracing imports removed - using config-based tracing instead
+
+
 
 #[tokio::main]
 async fn main() -> Result<()> {
     // Load configuration first to get logging settings
     let config = configuration::load_config(None)?;
     
-    // --- TRACING INITIALIZATION ---
-    // Initialize tracing based on the configuration file settings
+    // --- ENHANCED TRACING INITIALIZATION ---
+    // Initialize the base tracing from config (includes file logging if enabled)
     configuration::init_tracing(&config.logging)?;
     // --- END INITIALIZATION ---
 
     dotenvy::dotenv().expect(".env file not found");
+    
+    tracing::info!("Zenith CLI application started.");
 
-    // Note: DB connection is now handled by the commands that need it.
+    // Initialize file logging if enabled
+    if config.logging.file_logging {
+        init_file_logging(&config.logging);
+        
+        // Write the startup message to the log file
+        write_to_log_file("INFO", "zenith", "Zenith CLI application started.");
+    }
 
     let cli = Cli::parse();
 
@@ -53,9 +64,13 @@ async fn main() -> Result<()> {
         Commands::Run(args) => handle_run(args).await?,
         Commands::Serve(args) => handle_serve(args).await?, // New command
     }
+    
+    tracing::info!("Zenith CLI application finished.");
 
     Ok(())
 }
+
+
 
 // ==============================================================================
 // CLI Structure
@@ -176,63 +191,63 @@ async fn handle_run(args: RunArgs) -> Result<()> {
     let base_config = load_config(None)?;
     let live_config = load_live_config(&args.config)?;
 
-    // 2. Instantiate shared components
+    // 2. Determine Execution Mode & Print Banner
+    let mode = args.mode;
+    let is_live_trading = matches!(mode, ExecutionMode::Live);
+
+    // OBEY THE MASTER SAFETY SWITCH
+    if is_live_trading && !live_config.live_trading_enabled {
+        anyhow::bail!("FATAL: Attempted to run in Live mode, but `live_trading_enabled` is false in live.toml. Aborting.");
+    }
+
+    let api_client = Arc::new(BinanceClient::new(is_live_trading, &base_config.api)) as Arc<dyn ApiClient>;
+
+    // --- 3. EXECUTOR SELECTION LOGIC ---
+    let executor: Arc<dyn executor::Executor> = match mode {
+        ExecutionMode::Paper => {
+            println!("[INFO] INITIALIZING IN PAPER TRADING MODE");
+            println!("[INFO] >> Live data feed | Simulated local execution <<");
+            Arc::new(SimulatedExecutor::new(base_config.simulation.clone()))
+        }
+        ExecutionMode::Testnet | ExecutionMode::Live => {
+            // For both Testnet and Live, we use a real executor. The ApiClient's
+            // configuration determines which exchange we connect to.
+            let order_type = &base_config.execution.order_type;
+            println!("[INFO] Using '{}' order execution.", order_type);
+
+            match order_type.as_str() {
+                "Market" => {
+                    println!("[INFO] >> Executor: LiveExecutor (Market Orders) <<");
+                    Arc::new(LiveExecutor::new(Arc::clone(&api_client)))
+                }
+                "Limit" => {
+                    println!("[INFO] >> Executor: LimitOrderExecutor (Post-Only Limit Orders) <<");
+                    Arc::new(LimitOrderExecutor::new(Arc::clone(&api_client)))
+                }
+                _ => anyhow::bail!("Invalid `order_type` in config.toml. Must be 'Market' or 'Limit'."),
+            }
+        }
+    };
+    
+    // Print the final mode banner after selection
+    match mode {
+        ExecutionMode::Testnet => {
+            println!("[WARN] >> Target: Binance TESTNET <<");
+        }
+        ExecutionMode::Live => {
+            println!("\n!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
+            println!("[CRITICAL] >> Target: Binance PRODUCTION (REAL MONEY) <<");
+            println!("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n");
+            println!("Starting in 5 seconds... Press Ctrl+C to cancel.");
+            tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+        }
+        _ => {}
+    }
+
+    // 4. Create and Run the Engine
     let db_pool = connect().await?;
     run_migrations(&db_pool).await?;
     let db_repo = DbRepository::new(db_pool);
-
-    // --- MASTER EXECUTION LOGIC ---
-    let (executor, api_client): (Arc<dyn executor::Executor>, Arc<dyn ApiClient>) =
-        match args.mode {
-            ExecutionMode::Paper => {
-                tracing::info!("INITIALIZING IN PAPER TRADING MODE");
-                tracing::info!(">> Live data feed | Simulated local execution <<");
-
-                // In Paper mode, the executor is the SIMULATED one.
-                let simulated_executor = Arc::new(SimulatedExecutor::new(base_config.simulation.clone()));
-
-                // We still need an API client for the StateReconciler, which should use the Testnet.
-                let api_client = Arc::new(BinanceClient::new(false, &base_config.api)); // false = Testnet
-
-                (simulated_executor, api_client)
-            }
-            ExecutionMode::Testnet => {
-                tracing::warn!("INITIALIZING IN TESTNET TRADING MODE");
-                tracing::warn!(">> Live data feed | REAL orders sent to Binance TESTNET <<");
-
-                // In Testnet mode, the executor is the LIVE one, pointing to the Testnet API client.
-                let binance_client = BinanceClient::new(false, &base_config.api); // false = Testnet
-                let api_client = Arc::new(binance_client) as Arc<dyn ApiClient>;
-                let live_executor = Arc::new(LiveExecutor::new(Arc::clone(&api_client)));
-
-                (live_executor, api_client)
-            }
-            ExecutionMode::Live => {
-                tracing::error!("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
-                tracing::error!("INITIALIZING IN LIVE TRADING MODE");
-                tracing::error!(">> REAL MONEY IS AT RISK. PROCEED WITH CAUTION. <<");
-                tracing::error!("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
-
-                // OBEY THE MASTER SAFETY SWITCH
-                if !live_config.live_trading_enabled {
-                    anyhow::bail!("FATAL: Attempted to run in Live mode, but `live_trading_enabled` is false in live.toml. Aborting.");
-                }
-
-                // In Live mode, the executor is the LIVE one, pointing to the PRODUCTION API client.
-                let binance_client = BinanceClient::new(true, &base_config.api); // true = Production
-                let api_client = Arc::new(binance_client) as Arc<dyn ApiClient>;
-                let live_executor = Arc::new(LiveExecutor::new(Arc::clone(&api_client)));
-
-                // Add a 5-second countdown to allow the user to abort.
-                tracing::info!("Starting in 5 seconds... Press Ctrl+C to cancel.");
-                tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
-
-                (live_executor, api_client)
-            }
-        };
-
-    // 4. Create and Run the Engine (this part is now generic)
-    // The engine doesn't know or care which executor it was given.
     let risk_manager = Arc::new(SimpleRiskManager::new(base_config.risk_management.clone())?);
 
     // Create broadcast channel for WebSocket events
@@ -250,12 +265,11 @@ async fn handle_run(args: RunArgs) -> Result<()> {
         }
     });
 
-    // This is the missing piece from the next task, we add it here now.
     let mut engine = LiveEngine::new(
         live_config,
         base_config,
         api_client,
-        executor, // Pass in the generic executor
+        executor, // Plug in the selected executor
         db_repo,
         risk_manager,
         event_tx,
@@ -263,7 +277,7 @@ async fn handle_run(args: RunArgs) -> Result<()> {
 
     engine.run().await?;
     
-    tracing::info!("Engine has stopped.");
+    println!("Engine has stopped.");
     Ok(())
 }
 
@@ -623,4 +637,50 @@ fn generate_monthly_ranges(
         from = end_date.add(Duration::days(1));
     }
     ranges
+}
+
+/// Initialize file logging system
+fn init_file_logging(logging_config: &configuration::LoggingConfig) {
+    // Ensure the log directory exists
+    if let Err(e) = std::fs::create_dir_all(&logging_config.log_directory) {
+        eprintln!("Failed to create log directory '{}': {}", logging_config.log_directory, e);
+        return;
+    }
+    
+    // Create the log file path
+    let today = chrono::Utc::now().format("%Y-%m-%d");
+    let log_file_path = format!("{}/{}-{}.log", logging_config.log_directory, logging_config.log_filename, today);
+    
+    // Write a header to the log file
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_file_path) {
+        
+        let header = format!("=== Zenith Log File - {} ===\n", chrono::Utc::now());
+        let _ = std::io::Write::write_all(&mut file, header.as_bytes());
+        
+        tracing::info!("File logging initialized: {}", log_file_path);
+    }
+    
+    // Store the log file path globally for use by the logging system
+    // This is a simple approach - in a more robust implementation, you'd use a proper logging framework
+    unsafe {
+        std::env::set_var("ZENITH_LOG_FILE", log_file_path);
+    }
+}
+
+/// Write a log message to the log file
+fn write_to_log_file(level: &str, target: &str, message: &str) {
+    if let Ok(log_file) = std::env::var("ZENITH_LOG_FILE") {
+        if let Ok(mut file) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&log_file) {
+            
+            let timestamp = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%S%.3fZ");
+            let log_entry = format!("{} {} {}: {}\n", timestamp, level, target, message);
+            let _ = std::io::Write::write_all(&mut file, log_entry.as_bytes());
+        }
+    }
 }

@@ -10,6 +10,7 @@ use clap::ValueEnum;
 pub struct Config {
     pub api: ApiConfig,
     pub simulation: Simulation,
+    pub execution: ExecutionConfig,
     pub risk_management: RiskManagement,
     pub strategies: Strategies,
     /// Configuration for backtesting parameters
@@ -28,7 +29,12 @@ pub struct ApiConfig {
     #[serde(default)] // Use default (empty) if not provided by env
     pub production: ApiKeys,
 }
-
+/// Contains parameters for the live execution logic.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ExecutionConfig {
+    /// The default order type to use. "Market" or "Limit".
+    pub order_type: String,
+}
 /// A structure to hold an API key and secret pair.
 #[derive(Debug, Clone, Deserialize, Default)] // Default provides empty strings
 pub struct ApiKeys {
@@ -85,11 +91,16 @@ pub enum ExecutionMode {
 /// Defines a single trading bot for the live engine.
 #[derive(Debug, Clone, Deserialize)]
 pub struct LiveBotConfig {
-    /// A master switch to enable or disable this specific bot.
     pub enabled: bool,
     pub symbol: String,
     pub strategy_id: StrategyId,
-    /// The specific parameters for this bot's strategy, stored as a flexible object.
+    /// Optional: The kline interval for this specific bot.
+    /// If not provided, the default from `config.toml` will be used.
+    pub interval: Option<String>,
+    /// Optional: The leverage for this specific bot.
+    /// If not provided, a default value will be used.
+    pub leverage: Option<u8>,
+    /// The specific parameters for this bot's strategy.
     pub params: JsonValue,
 }
 
@@ -208,6 +219,18 @@ pub struct LoggingConfig {
     /// Format: "module_name=level"
     #[serde(default)]
     pub overrides: Vec<String>,
+    
+    /// Enable file logging.
+    #[serde(default = "default_file_logging")]
+    pub file_logging: bool,
+    
+    /// The directory for log files.
+    #[serde(default = "default_log_directory")]
+    pub log_directory: String,
+    
+    /// The filename prefix for log files.
+    #[serde(default = "default_log_filename")]
+    pub log_filename: String,
 }
 
 impl Default for LoggingConfig {
@@ -219,6 +242,9 @@ impl Default for LoggingConfig {
             thread_ids: default_thread_ids(),
             targets: default_targets(),
             overrides: Vec::new(),
+            file_logging: default_file_logging(),
+            log_directory: default_log_directory(),
+            log_filename: default_log_filename(),
         }
     }
 }
@@ -242,4 +268,16 @@ fn default_thread_ids() -> bool {
 
 fn default_targets() -> bool {
     true
+}
+
+fn default_file_logging() -> bool {
+    true
+}
+
+fn default_log_directory() -> String {
+    "logs".to_string()
+}
+
+fn default_log_filename() -> String {
+    "zenith".to_string()
 }

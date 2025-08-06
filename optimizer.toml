@@ -15,9 +15,9 @@
 # Defines the core context for the optimization job.
 [base_config]
 # Choose one of: "MACrossover", "SuperTrend", "ProbReversion", "FundingRateArb"
-strategy_id = "ProbReversion"
+strategy_id = "MACrossover"
 symbol = "BTCUSDT"
-interval = "15m"
+interval = "1h"
 
 # ==============================================================================
 # Parameter Spaces for Each Strategy
@@ -27,12 +27,12 @@ interval = "15m"
 # Only ONE parameter_space section should be active at a time.
 
 # --- MACrossover Strategy Parameters ---
-# [parameter_space]
+ [parameter_space]
 # The fast MA period should be short but not too noisy; the slow MA should be long enough to capture trend.
 # These ranges are realistic for crypto 1m charts and avoid hardcoding a single value.
-# ma_fast_period = { start = 1, end = 20, step = 1 }
-# ma_slow_period = { start = 21, end = 100, step = 3 }
-# trend_filter_period = { start = 50, end = 200, step = 10 }
+ma_fast_period = { start = 1, end = 20, step = 1 }
+ma_slow_period = { start = 21, end = 100, step = 3 }
+trend_filter_period = { start = 50, end = 200, step = 10 }
 
 # --- SuperTrend Strategy Parameters ---
 # [parameter_space]
@@ -49,21 +49,21 @@ interval = "15m"
 # Adjust ranges as needed based on asset volatility and backtest performance.
 
 # --- ProbReversion Strategy Parameters ---
-[parameter_space]
-# Bollinger Bands period
-bb_period = { start = 15, end = 30, step = 5 }
-# Bollinger Bands standard deviation
-bb_std_dev = { start = 1.5, end = 3.0, step = 0.5 }
-# RSI period
-rsi_period = { start = 10, end = 20, step = 2 }
-# RSI oversold threshold
-rsi_oversold = { start = 20, end = 35, step = 5 }
-# RSI overbought threshold
-rsi_overbought = { start = 65, end = 80, step = 5 }
-# ADX threshold for ranging market confirmation
-adx_threshold = { start = 15, end = 25, step = 5 }
-# ADX period
-adx_period = { start = 10, end = 20, step = 2 }
+# [parameter_space]
+# # Bollinger Bands period
+# bb_period = { start = 15, end = 30, step = 5 }
+# # Bollinger Bands standard deviation
+# bb_std_dev = { start = 1.5, end = 3.0, step = 0.5 }
+# # RSI period
+# rsi_period = { start = 10, end = 20, step = 2 }
+# # RSI oversold threshold
+# rsi_oversold = { start = 20, end = 35, step = 5 }
+# # RSI overbought threshold
+# rsi_overbought = { start = 65, end = 80, step = 5 }
+# # ADX threshold for ranging market confirmation
+# adx_threshold = { start = 15, end = 25, step = 5 }
+# # ADX period
+# adx_period = { start = 10, end = 20, step = 2 }
 
 # --- Funding Rate Arbitrage Parameters ---
 # [parameter_space]
@@ -85,9 +85,9 @@ adx_period = { start = 10, end = 20, step = 2 }
 # These are hard rules that immediately disqualify a backtest run.
 [analysis.filters]
 # A run must have at least this many trades to be considered statistically significant.
-min_total_trades = 50
+min_total_trades = 20
 # A run will be discarded if its maximum drawdown was worse (larger) than this percentage.
-max_drawdown_pct = 20.0
+max_drawdown_pct = 30.0
 
 # --- Scoring Weights ---
 # These weights determine the importance of each metric in the final "desirability" score.

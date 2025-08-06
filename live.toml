@@ -19,6 +19,8 @@ broadcast_klines = true
 enabled = true
 symbol = "BTCUSDT"
 strategy_id = "MACrossover"
+interval = "1m"  
+leverage = 5    
 
 [bot.params]
 ma_fast_period = 1
@@ -31,8 +33,10 @@ trend_filter_period = 2
 # start it or subscribe to its data.
 [[bot]]
 enabled = true
-symbol = "XEMUSDT"
+symbol = "ETHUSDT"
 strategy_id = "MACrossover"
+interval = "1m"  
+leverage = 5    
 
 [bot.params]
 ma_fast_period = 1
@@ -43,6 +47,8 @@ trend_filter_period = 2
 enabled = true
 symbol = "LINAUSDT"
 strategy_id = "MACrossover"
+interval = "1m"  
+leverage = 5    
 
 [bot.params]
 ma_fast_period = 1

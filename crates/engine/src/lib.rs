@@ -1,22 +1,23 @@
 use crate::error::EngineError;
-use tracing;
-use api_client::{ApiClient, LiveConnector}; // LiveConnector is needed here now
+use crate::event::{LiveEvent, MarketState}; // <-- NEW
+use api_client::{ApiClient, BookTickerUpdate, LiveConnector, MarkPriceUpdate};
 use configuration::{Config, LiveConfig};
 use database::DbRepository;
-use executor::{Executor, Portfolio}; // Import the generic Executor trait
+use executor::{Executor, Portfolio};
 use risk::RiskManager;
 use rust_decimal_macros::dec;
 use std::collections::HashMap;
 use std::sync::Arc;
 use strategies::Strategy;
-use tokio::sync::Mutex;
+use tokio::sync::{broadcast, mpsc, Mutex}; // <-- Add MPSC
 use uuid::Uuid;
 use chrono::Utc;
 use events::{LogMessage, LogLevel, WsMessage, KlineData};
-use tokio::sync::broadcast;
 
 pub mod error;
+pub mod event; // <-- NEW
 pub mod reconciler;
+pub mod util;
 
 pub use reconciler::StateReconciler;
 /// Rounds quantity to the appropriate precision for the given symbol.
@@ -46,6 +47,8 @@ pub struct KlineWithSymbol {
 /// A container for the components related to a single trading instrument.
 pub struct Bot {
     pub symbol: String,
+    pub interval: String, // <-- ADD
+    pub leverage: u8,     // <-- ADD
     pub strategy: Box<dyn Strategy>,
 }
 
@@ -67,6 +70,8 @@ pub struct LiveEngine {
 
     // --- Bot Management ---
     bots: HashMap<String, Bot>,
+    /// NEW: The engine's real-time view of the market for each symbol.
+    market_states: HashMap<String, MarketState>,
 }
 
 
@@ -95,6 +100,7 @@ impl LiveEngine {
             risk_manager,
             event_tx, // <-- STORE IT
             bots: HashMap::new(),
+            market_states: HashMap::new(),
         }
     }
 
@@ -135,21 +141,17 @@ impl LiveEngine {
         Ok(())
     }
 
-    /// Initializes the engine to a ready state for live trading.
+    /// Initializes the engine, now setting leverage on a per-bot basis.
     pub async fn init(&mut self) -> Result<(), EngineError> {
-        self.log(LogLevel::Info, "Initializing trading engine...");
+        self.log(events::LogLevel::Info, "Initializing trading engine...");
         self.sync_portfolio_state().await?;
-        self.log(LogLevel::Info, "Portfolio state synchronized with exchange.");
-        self.populate_bots()?;
-        self.log(LogLevel::Info, &format!("Loaded {} active bots.", self.bots.len()));
+        self.log(events::LogLevel::Info, "Portfolio state synchronized with exchange.");
         
-        for symbol in self.bots.keys() {
-            self.log(LogLevel::Info, &format!("Setting leverage for {}...", symbol));
-            self.api_client.set_leverage(symbol, 10).await?;
-        }
+        // This method now also sets leverage
+        self.populate_bots_and_set_leverage().await?;
         
-        self.log(LogLevel::Info, "Engine initialization complete.");
-        self.broadcast_portfolio_state().await?; // Broadcast initial state
+        self.log(events::LogLevel::Info, "Engine initialization complete.");
+        self.broadcast_portfolio_state().await?;
         Ok(())
     }
 
@@ -209,42 +211,65 @@ impl LiveEngine {
         Ok(())
     }
 
-    /// Creates and stores `Bot` instances for all `enabled = true` bots in the config.
-    fn populate_bots(&mut self) -> Result<(), EngineError> {
+    /// NEW: Combines bot creation and leverage setting.
+    async fn populate_bots_and_set_leverage(&mut self) -> Result<(), EngineError> {
+        let default_interval = self.base_config.backtest.interval.clone();
+        
         for bot_config in &self.live_config.bots {
             if bot_config.enabled {
-                tracing::debug!("Loading bot: {} with strategy: {:?}", bot_config.symbol, bot_config.strategy_id);
-                let mut temp_config = self.base_config.clone();
-                let strategy = crate::util::create_strategy_from_live_config(&mut temp_config, bot_config)?;
+                let interval = bot_config.interval.clone().unwrap_or_else(|| default_interval.clone());
+                let leverage = bot_config.leverage.unwrap_or(10); // Default to 10x if not set
+
+                self.log(events::LogLevel::Info, &format!("Loading bot for {} on {} interval with {}x leverage.", bot_config.symbol, interval, leverage));
                 
+                let strategy = util::create_strategy_from_live_config(&self.base_config, bot_config)?;
+                
+                // Set leverage on the exchange for this specific symbol
+                self.api_client.set_leverage(&bot_config.symbol, leverage).await?;
+
                 let bot = Bot {
                     symbol: bot_config.symbol.clone(),
+                    interval,
+                    leverage,
                     strategy,
                 };
                 self.bots.insert(bot_config.symbol.clone(), bot);
-                tracing::debug!("Bot loaded successfully: {}", bot_config.symbol);
-            } else {
-                tracing::debug!("Skipping disabled bot: {}", bot_config.symbol);
+                self.market_states.entry(bot_config.symbol.clone()).or_default();
             }
         }
         Ok(())
     }
 
-    /// The main event loop for the live trading engine.
+    /// The main event loop, now capable of handling multiple intervals.
     pub async fn run(&mut self) -> Result<(), EngineError> {
         self.init().await?;
 
-        let symbols: Vec<String> = self.bots.keys().cloned().collect();
-        if symbols.is_empty() {
-            self.log(LogLevel::Warn, "No bots enabled in live.toml. Exiting.");
+        if self.bots.is_empty() {
+            self.log(events::LogLevel::Warn, "No bots enabled in live.toml. Exiting.");
             return Ok(());
         }
-        let interval = &self.base_config.backtest.interval;
-        
+
+        // --- NEW: Multi-Interval Subscription Logic ---
+        let mut events_by_interval: HashMap<String, Vec<String>> = HashMap::new();
+        for bot in self.bots.values() {
+            events_by_interval.entry(bot.interval.clone()).or_default().push(bot.symbol.clone());
+        }
+
+        let (event_in_tx, mut event_in_rx) = mpsc::channel(1024);
         let is_live = self.live_config.live_trading_enabled;
         let connector = LiveConnector::new(is_live);
-        let mut kline_rx = connector.subscribe_to_klines(&symbols, interval)?;
         
+        // Subscribe to each interval group separately
+        for (interval, symbols) in events_by_interval {
+            self.log(events::LogLevel::Info, &format!("Subscribing to {} interval for symbols: {:?}", interval, symbols));
+            self.spawn_kline_handler(connector.subscribe_to_klines(&symbols, &interval)?, event_in_tx.clone());
+        }
+        
+        // Subscribe to universal streams for all symbols
+        let all_symbols: Vec<String> = self.bots.keys().cloned().collect();
+        self.spawn_book_ticker_handler(connector.subscribe_to_book_tickers(&all_symbols)?, event_in_tx.clone());
+        self.spawn_mark_price_handler(connector.subscribe_to_mark_prices(&all_symbols)?, event_in_tx.clone());
+
         let reconciler = StateReconciler::new(
             Arc::clone(&self.portfolio),
             Arc::clone(&self.api_client),
@@ -253,33 +278,70 @@ impl LiveEngine {
         );
         tokio::spawn(reconciler.start());
         
-        self.log(LogLevel::Info, &format!("Engine is running. Subscribed to {} kline streams.", symbols.len()));
+        self.log(events::LogLevel::Info, "Engine is running. Waiting for market data...");
 
-        tracing::info!("[ENGINE] Starting kline processing loop");
-        while let Some((symbol, kline)) = kline_rx.recv().await {
-            let start_time = std::time::Instant::now();
-            tracing::info!("[ENGINE] Received kline for {}: close price {}", symbol, kline.close);
-            match self.process_kline(&symbol, &kline).await {
-                Ok(_) => {
-                    let duration = start_time.elapsed();
-                    tracing::info!("[ENGINE] Successfully processed kline for {} in {:?}", symbol, duration);
-                }
-                Err(e) => {
-                    let duration = start_time.elapsed();
-                    tracing::error!("[ENGINE] Failed to process kline for {} in {:?}: {:?}", symbol, duration, e);
-                    self.log(LogLevel::Error, &format!("Failed to process kline: {:?}", e));
-                }
+        while let Some(event) = event_in_rx.recv().await {
+            if let Err(e) = self.handle_event(event).await {
+                self.log(events::LogLevel::Error, &format!("Failed to handle event: {:?}", e));
             }
         }
         
-        tracing::error!("[ENGINE] Kline channel closed - no more klines will be received");
-        
-        self.log(LogLevel::Error, "WebSocket stream ended unexpectedly.");
+        self.log(events::LogLevel::Error, "Main event stream ended unexpectedly.");
         Ok(())
     }
 
-    /// The core logic for processing a single market event (Kline).
-    async fn process_kline(&mut self, symbol: &str, kline: &core_types::Kline) -> Result<(), EngineError> {
+    /// The new master event handler that routes events to specific logic.
+    async fn handle_event(&mut self, event: LiveEvent) -> Result<(), EngineError> {
+        match event {
+            LiveEvent::Kline((symbol, kline)) => {
+                // Update market state
+                self.market_states.entry(symbol.clone()).or_default().last_kline = Some(kline.clone());
+                // Process the kline for trading signals
+                self.process_kline_signal(&symbol, &kline).await?;
+            }
+            LiveEvent::BookTicker(ticker) => {
+                let state = self.market_states.entry(ticker.symbol.clone()).or_default();
+                state.best_bid = Some(ticker.best_bid_price);
+                state.best_ask = Some(ticker.best_ask_price);
+            }
+            LiveEvent::MarkPrice(mark_price) => {
+                self.market_states.entry(mark_price.symbol.clone()).or_default().mark_price = Some(mark_price.mark_price);
+            }
+        }
+        // We can add a periodic portfolio broadcast here later.
+        Ok(())
+    }
+
+    // --- Spawn Helper Methods ---
+    fn spawn_kline_handler(&self, mut rx: mpsc::Receiver<(String, core_types::Kline)>, tx: mpsc::Sender<LiveEvent>) {
+        tokio::spawn(async move {
+            while let Some((symbol, kline)) = rx.recv().await {
+                if tx.send(LiveEvent::Kline((symbol, kline))).await.is_err() { break; }
+            }
+        });
+    }
+
+    fn spawn_book_ticker_handler(&self, mut rx: mpsc::Receiver<BookTickerUpdate>, tx: mpsc::Sender<LiveEvent>) {
+        tokio::spawn(async move {
+            while let Some(ticker) = rx.recv().await {
+                if tx.send(LiveEvent::BookTicker(ticker)).await.is_err() { break; }
+            }
+        });
+    }
+
+    fn spawn_mark_price_handler(&self, mut rx: mpsc::Receiver<MarkPriceUpdate>, tx: mpsc::Sender<LiveEvent>) {
+        tokio::spawn(async move {
+            while let Some(mark_price) = rx.recv().await {
+                if tx.send(LiveEvent::MarkPrice(mark_price)).await.is_err() { break; }
+            }
+        });
+    }
+    
+    /// Renamed from `process_kline` to be more specific. Contains the trading logic.
+    async fn process_kline_signal(&mut self, symbol: &str, kline: &core_types::Kline) -> Result<(), EngineError> {
+        // This function's logic is the SAME as the old `process_kline` method.
+        // It evaluates the strategy, checks risk, and calls the executor.
+        
         tracing::info!("[ENGINE] Processing kline for {}: broadcast_klines = {}", symbol, self.live_config.broadcast_klines);
         // Broadcast kline data to WebSocket clients if enabled
         if self.live_config.broadcast_klines {
@@ -328,7 +390,7 @@ impl LiveEngine {
                     if pos_symbol != &bot_symbol {
                         // For now, we'll use the last known price or a default
                         // In a real system, you'd fetch current prices for all symbols
-                        market_prices.insert(pos_symbol.clone(), dec!(0)); // Placeholder
+                        market_prices.insert(pos_symbol.clone(), rust_decimal_macros::dec!(0)); // Placeholder
                     }
                 }
                 
@@ -360,7 +422,15 @@ impl LiveEngine {
             };
             self.log(LogLevel::Info, &format!("Risk assessment passed. Final Order: {:?} {} @ Market", order_request.quantity, order_request.symbol));
 
-            match self.executor.execute(&order_request, kline).await {
+            // Get the current market state for this symbol to provide best bid/ask prices
+            let default_state = MarketState::default();
+            let market_state = self.market_states.get(symbol).unwrap_or(&default_state);
+            let best_bid = market_state.best_bid;
+            let best_ask = market_state.best_ask;
+            
+            tracing::debug!("[ENGINE] Market state for {} - Best bid: {:?}, Best ask: {:?}", symbol, best_bid, best_ask);
+            
+            match self.executor.execute(&order_request, kline, best_bid, best_ask).await {
                 Ok(execution) => {
                     self.log(LogLevel::Info, &format!("SUCCESS: Execution confirmed for {}: {:?}", execution.symbol, execution.price));
                     
@@ -384,35 +454,10 @@ impl LiveEngine {
         }
         Ok(())
     }
-}
 
-// We need a helper to create strategies, let's put it in a `util` module.
-pub mod util {
-    use super::*;
-    use configuration::{LiveBotConfig, MACrossoverParams, ProbReversionParams, SuperTrendParams};
-    use serde_json::from_value;
-    use strategies::create_strategy;
-
-    pub fn create_strategy_from_live_config(
-        base_config: &mut Config,
-        bot_config: &LiveBotConfig,
-    ) -> Result<Box<dyn Strategy>, EngineError> {
-        match bot_config.strategy_id {
-            strategies::StrategyId::MACrossover => {
-                let params: MACrossoverParams = from_value(bot_config.params.clone())?;
-                base_config.strategies.ma_crossover = params;
-            },
-            strategies::StrategyId::SuperTrend => {
-                let params: SuperTrendParams = from_value(bot_config.params.clone())?;
-                base_config.strategies.super_trend = params;
-            },
-            strategies::StrategyId::ProbReversion => {
-                let params: ProbReversionParams = from_value(bot_config.params.clone())?;
-                base_config.strategies.prob_reversion = params;
-            },
-            _ => return Err(EngineError::Configuration("Strategy not supported in live engine".to_string())),
-        }
-        
-        Ok(create_strategy(bot_config.strategy_id, base_config, bot_config.symbol.as_str())?)
+    /// The core logic for processing a single market event (Kline).
+    async fn process_kline(&mut self, symbol: &str, kline: &core_types::Kline) -> Result<(), EngineError> {
+        // This method is kept for backward compatibility but now delegates to process_kline_signal
+        self.process_kline_signal(symbol, kline).await
     }
 }
