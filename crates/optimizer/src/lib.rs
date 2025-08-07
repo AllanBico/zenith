@@ -242,6 +242,11 @@ impl Optimizer {
                 }
                 temp_config.strategies.funding_rate_arb = p;
             },
+            StrategyId::MlStrategy => {
+                // ML strategy doesn't use the standard parameter optimization system
+                // It uses a pre-trained model, so we just use the existing config
+                // No parameter updates needed
+            },
         }
         
         Ok(create_strategy(strategy_id, &temp_config, &self.config.base_config.symbol)?)

@@ -528,6 +528,13 @@ fn generate_strategy_params(config: &configuration::Config, strategy_id: Strateg
                 "basis_safety_threshold": config.strategies.funding_rate_arb.basis_safety_threshold,
             }))
         },
+        StrategyId::MlStrategy => {
+            // ML strategy doesn't use traditional parameters, it uses a pre-trained model
+            // Return the model path as a parameter for tracking purposes
+            Ok(json!({
+                "model_path": config.strategies.ml_strategy.model_path.to_string_lossy(),
+            }))
+        },
     }
 }
 

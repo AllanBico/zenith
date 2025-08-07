@@ -1,7 +1,7 @@
 use crate::error::EngineError;
 use configuration::{Config, LiveBotConfig, MACrossoverParams, ProbReversionParams, SuperTrendParams};
 use serde_json::from_value;
-use strategies::{create_strategy, Strategy, StrategyId};
+use strategies::{create_strategy, Strategy, StrategyId, StrategyError, ml_strategy::MlStrategy};
 
 /// Creates a `Strategy` instance by merging the bot-specific parameters from the
 /// live config into a temporary copy of the base configuration.
@@ -23,6 +23,18 @@ pub fn create_strategy_from_live_config(
             let params: SuperTrendParams = from_value(bot_config.params.clone())
                 .map_err(|e| EngineError::Configuration(e.to_string()))?;
             temp_config.strategies.super_trend = params;
+        }
+        StrategyId::MlStrategy => {
+            // For ML strategy, we need to check if the model path is provided
+            let params = &temp_config.strategies.ml_strategy;
+            if params.model_path.as_os_str().is_empty() {
+                return Err(EngineError::Configuration(
+                    "MlStrategy requires a `model_path` in config.".to_string()
+                ));
+            }
+            // Create the ML strategy directly since it doesn't use the standard parameter system
+            return Ok(Box::new(MlStrategy::new(&params.model_path, bot_config.symbol.clone())
+                .map_err(|e| EngineError::Configuration(e.to_string()))?));
         }
         StrategyId::ProbReversion => {
             let params: ProbReversionParams = from_value(bot_config.params.clone())

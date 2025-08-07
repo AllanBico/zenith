@@ -1,6 +1,7 @@
 use crate::error::StrategyError;
 use crate::funding_rate_arb::FundingRateArb;
 use crate::ma_crossover::MACrossover;
+use crate::ml_strategy::MlStrategy;
 use crate::prob_reversion::ProbReversion;
 use crate::super_trend::SuperTrend;
 use crate::Strategy;
@@ -32,6 +33,15 @@ pub fn create_strategy(
         StrategyId::FundingRateArb => { // <-- ADD THIS BLOCK
             let params = config.strategies.funding_rate_arb.clone();
             Ok(Box::new(FundingRateArb::new(params)?))
+        }
+        StrategyId::MlStrategy => {
+            let params = &config.strategies.ml_strategy;
+            if params.model_path.as_os_str().is_empty() {
+                return Err(StrategyError::InvalidParameters(
+                    "MlStrategy requires a `model_path` in config.".to_string()
+                ));
+            }
+            Ok(Box::new(MlStrategy::new(&params.model_path, symbol.to_string())?))
         }
     }
 }

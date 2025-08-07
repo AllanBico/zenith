@@ -2108,6 +2108,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "ml-features"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "core-types",
+ "polars",
+ "rust_decimal",
+ "ta 0.5.0",
+]
+
+[[package]]
 name = "ml-trainer"
 version = "0.1.0"
 dependencies = [
@@ -4110,11 +4122,17 @@ checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 name = "strategies"
 version = "0.1.0"
 dependencies = [
+ "bincode",
  "configuration",
  "core-types",
+ "ml-features",
+ "ndarray",
+ "polars",
  "rust_decimal",
  "rust_decimal_macros",
  "serde",
+ "serde_json",
+ "smartcore",
  "ta 0.5.0",
  "thiserror 2.0.12",
  "tracing",

@@ -28,7 +28,7 @@ pub mod funding_rate_arb;
 pub mod ma_crossover;
 pub mod prob_reversion;
 pub mod super_trend;
-
+pub mod ml_strategy;
 // Re-export the key components to create a clean, public-facing API.
 pub use error::StrategyError;
 pub use factory::create_strategy;

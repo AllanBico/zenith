@@ -6,6 +6,7 @@ pub enum StrategyId {
     SuperTrend,
     ProbReversion,
     FundingRateArb,
+    MlStrategy,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -34,14 +34,11 @@ trend_filter_period = 2
 [[bot]]
 enabled = true
 symbol = "ETHUSDT"
-strategy_id = "MACrossover"
+strategy_id = "MlStrategy"
 interval = "1m"  
 leverage = 5    
 
 [bot.params]
-ma_fast_period = 1
-ma_slow_period = 2
-trend_filter_period = 2
 
 [[bot]]
 enabled = true

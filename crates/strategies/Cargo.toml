@@ -9,7 +9,7 @@ edition = "2024"
 # ==============================================================================
 # Depends on core-types to consume `Kline` data and produce `Signal`s.
 core-types = { path = "../core-types" }
-
+ml-features = { path = "../ml-features" }
 # Depends on configuration to receive its parameters. This is a key part of
 # dependency injection; the strategy doesn't load the config, it's GIVEN the config.
 configuration = { path = "../configuration" }
@@ -37,3 +37,21 @@ rust_decimal = "1.35"
 rust_decimal_macros = "1.35"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# ==============================================================================
+# ML Strategy Dependencies
+# ==============================================================================
+# For data manipulation and feature engineering
+polars = { version = "0.37", features = ["lazy", "ndarray", "parquet"] }
+
+# For machine learning models
+smartcore = { version = "0.4.0", features = ["serde"] }
+
+# For numerical computing (used by polars and smartcore)
+ndarray = "0.15"
+
+# For serialization/deserialization of ML models
+bincode = "1.3"
+
+# For JSON handling in ML strategy
+serde_json = "1.0"

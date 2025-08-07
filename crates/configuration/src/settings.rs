@@ -3,6 +3,7 @@ use serde::Deserialize;
 use chrono::NaiveDate;
 use serde_json::Value as JsonValue;
 use core_types::enums::StrategyId;
+use std::path::PathBuf;
 #[cfg(feature = "clap")]
 use clap::ValueEnum;
 /// The root configuration structure for the entire application.
@@ -165,8 +166,15 @@ pub struct Strategies {
     pub super_trend: SuperTrendParams,
     pub prob_reversion: ProbReversionParams,
     pub funding_rate_arb: FundingRateArbParams,
+    #[serde(default)] // Make ML params optional in config
+    pub ml_strategy: MlStrategyParams,
 }
-
+/// Parameters for the ML Strategy.
+#[derive(Debug, Deserialize, Clone, Default)]
+pub struct MlStrategyParams {
+    /// The file path to the serialized, trained model artifact.
+    pub model_path: PathBuf,
+}
 /// Parameters for the Triple Moving Average Crossover strategy.
 #[derive(Debug, Deserialize, Clone)]
 pub struct MACrossoverParams {

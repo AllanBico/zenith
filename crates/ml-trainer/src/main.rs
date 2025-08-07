@@ -163,6 +163,8 @@ struct PreprocessingInfo {
     feature_scaling: bool,
     feature_selection: Option<Vec<usize>>,
     missing_value_strategy: String,
+    scaler_means: Vec<f64>,
+    scaler_stds: Vec<f64>,
 }
 
 // ... (Cli and Args structs from Step 1) ...
@@ -263,10 +265,11 @@ async fn handle_generate_dataset(args: GenerateDatasetArgs) -> Result<()> {
     // 4. Generate Labels
     println!("Applying Triple Barrier labeling...");
     // These would eventually come from a config file.
+    // Improved labeling configuration for better accuracy
     let labeling_config = LabelingConfig {
-        take_profit_pct: 0.015, // 1.5%
-        stop_loss_pct: 0.0075, // 0.75%
-        time_limit_bars: 24, // 24 bars
+        take_profit_pct: 0.02, // 2% - More realistic target
+        stop_loss_pct: 0.02, // 1% - Improved risk/reward ratio (2:1)
+        time_limit_bars: 5, // 48 bars (2 days) - More time for moves to develop
     };
     let labels = labeling::apply_triple_barrier(&features_df, &labeling_config)?;
     
@@ -368,8 +371,8 @@ async fn handle_train_model(args: TrainModelArgs) -> Result<()> {
     println!("Class weights - Win: {:.3}, Not-Win: {:.3}", win_weight, not_win_weight);
     
     let final_params = RandomForestClassifierParameters::default()
-        .with_n_trees(100)
-        .with_max_depth(10)
+        .with_n_trees(50)
+        .with_max_depth(5)
         .with_min_samples_leaf(5)
         .with_min_samples_split(2);
     
@@ -452,6 +455,8 @@ async fn handle_train_model(args: TrainModelArgs) -> Result<()> {
             feature_scaling: true,
             feature_selection: None,
             missing_value_strategy: "drop".to_string(),
+            scaler_means: scaler.means.clone(),
+            scaler_stds: scaler.stds.clone(),
         },
     };
 

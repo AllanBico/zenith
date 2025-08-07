@@ -1,0 +1,28 @@
+[package]
+name = "ml-features"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+# ==============================================================================
+# Workspace Dependencies
+# ==============================================================================
+core-types = { path = "../core-types" }
+
+# ==============================================================================
+# External Dependencies
+# ==============================================================================
+# For data manipulation and feature engineering
+polars = { version = "0.37", features = ["lazy", "ndarray", "parquet"] }
+
+# For technical analysis indicators
+ta = "0.5"
+
+# For high-precision decimal arithmetic
+rust_decimal = { version = "1.35", features = ["serde"] }
+
+# For date and time handling
+chrono = { version = "0.4", features = ["serde"] }
+
+# For error handling
+anyhow = "1.0"

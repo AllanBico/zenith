@@ -66,11 +66,11 @@ secret = "ymgRxY9pYXRtbDjwqtI2Fo1fK8CtctBpx5kjNNjxv1uIrmGcM6qgu7A91vgfpAaY"
 # Choose one of: "MACrossover", "SuperTrend", "ProbReversion", "FundingRateArb"
 # ------------------------------------------------------------------------------
 [backtest]
-strategy_id = "SuperTrend"
+strategy_id = "MlStrategy"
 symbol = "BTCUSDT"
 interval = "1h"
 initial_capital = 100000.0
-start_date = "2025-01-01"
+start_date = "2024-01-01"
 end_date = "2025-06-30"
 
 # ------------------------------------------------------------------------------
@@ -138,7 +138,9 @@ adx_period = 14
 [strategies.funding_rate_arb]
 target_rate_threshold = 0.001  # e.g., 0.1%
 basis_safety_threshold = 0.005 # e.g., 0.5% basis between spot and perp
-
+[strategies.ml_strategy]
+# The path to the trained model we created with the ml-trainer.
+model_path = "models/btc_1h_rf.bin"
 # ------------------------------------------------------------------------------
 # Logging Configuration
 #
