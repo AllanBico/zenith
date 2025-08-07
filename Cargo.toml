@@ -15,7 +15,7 @@ members = [
     "crates/optimizer",
     "crates/database",
     "crates/api-client",
-    "crates/web-server", "crates/configuration", "crates/executor", "crates/analyzer", "crates/wfo", "crates/portfolio-backtester", "crates/alerter",
+    "crates/web-server", "crates/configuration", "crates/executor", "crates/analyzer", "crates/wfo", "crates/portfolio-backtester", "crates/alerter", "crates/ml-trainer",
 ]
 resolver = "2"
 
