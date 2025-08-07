@@ -68,8 +68,8 @@ secret = "ymgRxY9pYXRtbDjwqtI2Fo1fK8CtctBpx5kjNNjxv1uIrmGcM6qgu7A91vgfpAaY"
 [backtest]
 strategy_id = "SuperTrend"
 symbol = "BTCUSDT"
-interval = "1m"
-initial_capital = 1000.0
+interval = "1h"
+initial_capital = 100000.0
 start_date = "2025-01-01"
 end_date = "2025-06-30"
 
@@ -94,11 +94,11 @@ slippage_pct = 0.1
 [risk_management]
 # The fraction of the total portfolio equity to risk per trade.
 # 0.05 means 5% of equity will be at risk on any given trade.
-risk_per_trade_pct = 0.05
+risk_per_trade_pct = 0.01
 
 # The distance to the stop-loss, used for calculating position size.
 # 0.02 means the stop-loss is assumed to be 2% away from the entry price.
-stop_loss_pct = 0.04
+stop_loss_pct = 0.02
 
 # ------------------------------------------------------------------------------
 # Strategy Parameters
